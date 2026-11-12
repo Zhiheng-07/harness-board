@@ -1,0 +1,4 @@
+# board.html is a generated single file (about 1.7 MB, fonts embedded); don't show it as a text diff
+harness-board/assets/board.html -diff linguist-generated
+* text=auto eol=lf
+*.png binary
