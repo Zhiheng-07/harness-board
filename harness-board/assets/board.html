@@ -569,6 +569,8 @@ button:focus-visible{outline:2px solid currentColor;outline-offset:2px}
 #frame[data-form=latticefui][data-tier=ultra]{--rcw:clamp(150px,12.05cqw,300px)}
 #frame[data-tier=half][data-form=latticefui] #reads{grid-template-columns:repeat(3,minmax(0,240px));justify-content:start}
 #frame[data-tier=narrow][data-form=latticefui] .read small{display:block;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+/* 窄条两列平分整宽，格子比内容宽：补充贴右边框（GitHub #1，D-115）；在轮播的照旧从开头排 */
+#frame[data-tier=narrow][data-form=latticefui] .read small:not(.mq){text-align:right}
 /* 读数格宽度跟内容走（D-93）：名称、数值两栏定宽，补充按实际文字定宽（超过 10 个字宽省略），每列取最宽那格；
    括号里左右留白都是数值字号的 0.93 倍、栏间距 0.571 倍（1440 宽时 13 和 8）；宽屏随字号放大，不再按窗口宽度拉长 */
 #frame[data-form=latticefui]:not([data-tier=narrow]) #reads{grid-template-columns:repeat(2,max-content)}
