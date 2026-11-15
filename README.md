@@ -16,7 +16,7 @@ The page has three parts:
 - **The flow.** Sources (your input, plus memory, skills and MCP loaded automatically) → context → model → gates (permission, hooks) → execution (tools, subagents). The path that is active right now has particles moving along it. When tools finish, the flow loops back to the model, and the counter shows how many times this has happened.
 - **Record.** Where this turn's time went (model, tools, waiting for you, gaps) and the latest events. Click any card, or **All events**, to open a drawer with the details.
 
-Colors have fixed meanings. **Amber** means Claude Code is waiting for you, for example an approval dialog in the terminal. **Red** means a step did not complete as planned: it failed, was denied, or you pressed Esc. **Gray, frozen** means the connection was lost or Claude Code has exited.
+Colors have fixed meanings. **Amber** means Claude Code is waiting for you, for example an approval dialog in the terminal or the desktop app. **Red** means a step did not complete as planned: it failed, was denied, or you pressed Esc. **Gray, frozen** means the connection was lost or Claude Code has exited.
 
 ![Waiting for approval](docs/images/en-approval.png)
 
@@ -26,12 +26,12 @@ The layout rearranges itself for wide, regular, half-screen and narrow windows; 
 
 ## Requirements
 
-- **macOS**, with Claude Code running **in a terminal**. Linux may work but is untested. Windows is not supported: the script refuses to run there.
+- **macOS**, with Claude Code running **in a terminal** or **in the Claude desktop app** (its Code feature). Linux may work but is untested. Windows is not supported: the script refuses to run there.
 - **Claude Code 2.1.69 or later.** The record parser has been checked against Claude Code 2.1.258 to 2.1.322.
 - **`python3`, version 3.9 or later.** Only the standard library is used, so there is nothing to `pip install`. On macOS, `python3` comes with the Command Line Tools: run `xcode-select --install` if it is missing.
 - A browser.
 
-This is **not** for the Claude desktop or web chat apps, and not for Claude Code cloud sessions. The page reads the session records that Claude Code writes on your own machine, and those apps don't write them there.
+It is **not** for the regular chat in the Claude desktop or web apps, and not for Claude Code cloud sessions. The page reads the session records that Claude Code writes on your own machine, and those don't write them there.
 
 ## Install
 

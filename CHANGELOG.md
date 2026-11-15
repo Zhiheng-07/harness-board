@@ -2,6 +2,12 @@
 
 [中文在下方](#更新记录)
 
+## 0.3.0 — 2026-11-15
+
+- **Claude desktop app (#3).** harness-board now works for Claude Code in the Claude desktop app (its Code feature) on macOS. Sessions there never write the record that marks the end of a turn, so the board used to stay on "Model thinking" and then count seconds without new records. A turn now ends when the Stop hooks have run, when Claude Code goes idle, or when the next turn starts. Headless sessions (`claude -p` and other SDK hosts) are fixed the same way.
+- **Where to go.** While Claude Code waits for you, the page says where: "in the terminal" for terminal sessions, "in the desktop app" for desktop sessions, and no place when the source is unknown. When the banner is too narrow for the full text, it shows the short version and the line below still names the place.
+- **Fixes.** In desktop and headless sessions the model card now lights up when a request is sent, not when the reply arrives. Input from SDK hosts that wraps its text in custom tags now counts as your input. In terminal sessions, "Dialog open in terminal" no longer runs off the edge of a 320-pixel-wide window.
+
 ## 0.2.1 — 2026-11-15
 
 - **Fix (#1).** When the board window is narrow (for example shrunk to the browser's minimum width), the status text in each readings cell (e.g. "Ended", "Connected") is now right-aligned to the cell's edge instead of leaving a large gap. Other window sizes are unchanged.
@@ -21,6 +27,12 @@ First release. Type `/harness-board` in a Claude Code session and a local page o
 ---
 
 ## 更新记录
+
+### 0.3.0（2026-11-15）
+
+- **Claude 桌面应用（#3）：** 支持 macOS 上 Claude 桌面应用里的 Claude Code（Code 功能）。那里的会话每一轮都不写标记回合结束的记录，看板以前会停在「模型在想」，然后一直读秒。现在 Stop hook 跑完、Claude Code 空闲、或下一轮开始时就算这一轮结束。无头会话（`claude -p` 和其他 SDK 宿主）一起修好了。
+- **去哪里处理：** 等你的时候，页面写明在哪里：终端会话写「终端」，桌面会话写「桌面应用」，认不出来源时不提地点。横幅放不下完整说法时换成短说法，地点由下面那行说明交代。
+- **修正：** 桌面和无头会话里，模型卡在请求发出时就亮，不再等回复到了才亮；SDK 宿主用自定义标签包着的输入也算你的输入；终端会话的英文「Dialog open in terminal」在 320 像素宽的窗口里不再超出画面。
 
 ### 0.2.1（2026-11-15）
 

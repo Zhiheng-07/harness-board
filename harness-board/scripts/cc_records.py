@@ -205,6 +205,7 @@ class Board:
         self.proc_available = None
         self.proc_status = None
         self.waiting_for = None
+        self._proc_entry = None
         self.parse_errors = 0
         self.stats = collections.Counter()
         self.prev_title = None
@@ -240,6 +241,9 @@ class Board:
         self._saw_origin = False
         self._saw_api = False
         self._headless = False
+        # 会话来源（记录里的 entrypoint）和本轮最后一条流程记录的时刻：不写 turn_duration 的会话靠它们收尾（05 号件 §三·三，D-116）
+        self.entrypoint = None
+        self._flow_ts = None
         self.custom_title = None
         self.ai_title = None
         self.version = None
@@ -287,7 +291,12 @@ class Board:
             if o.get('entrypoint') == 'sdk-cli':
                 self._headless = True
             if agent is None:
+                ep = o.get('entrypoint')
+                if self.entrypoint is None and isinstance(ep, str) and ep:
+                    self.entrypoint = ep
                 self._main_record(o, ts)
+                if ts is not None and o.get('type') in ('user', 'assistant', 'system'):
+                    self._flow_ts = ts
                 if ts is not None:
                     self._tick(ts)
             else:
@@ -334,6 +343,8 @@ class Board:
             self._tick(now)
             return
         self.proc_available = True
+        if isinstance(reg.get('entrypoint'), str) and reg['entrypoint']:
+            self._proc_entry = reg['entrypoint']
         if self.version is None and isinstance(reg.get('version'), str):
             # 新会话还没有记录时，版本号先取进程登记文件里的（D-110）
             self.version = reg['version']
@@ -352,6 +363,9 @@ class Board:
         elif was_waiting:
             self._end_wait(old_wf, now)
             self._set_wait(None, now)
+        if status == 'idle':
+            # 不写 turn_duration 的会话：进程空闲就收尾；记录比状态晚读到时，下一次读进程文件再收（D-116）
+            self._quiet_end(self._flow_ts)
         self._tick(now)
 
     def proc_exited(self):
@@ -469,6 +483,8 @@ class Board:
             'turn': {'start_ts': L['turn_start'], 'end_ts': L['turn_end'], 'ms': ss['turn_ms'], 'loop': self.c['loop'],
                      'tool_calls': L['turn_tools'], 'think_blocks': md['think_blocks'], 'think_ms': L['think_ms'], 'injected': cx['round_ctx']},
             'wait': {'kind': L['wait_kind'], 'since': L['wait_since'], 'text': self.waiting_for},
+            # 会话来源：页面「去哪里处理」的说法按它选（D-116）
+            'host': {'cli': 'terminal', 'claude-desktop': 'desktop'}.get(self.entrypoint or self._proc_entry),
             'tools': [dict(r) for r in self._tools.values()],
             'perm': {'last': L['perm_last'], 'counts': dict(L['perm_counts'])},
             'model': {'id': md['model'], 'name': model_name(md['model']), 'effort': md['effort'], 'thinking': md['thinking']},
@@ -805,6 +821,9 @@ class Board:
         elif re.match(r'/compact(\s|$)', s):
             self._set('compact', 'active', None, ts)
             self._add_log('压缩', '开始压缩（手动）', ts)
+        elif o.get('promptSource') == 'sdk':
+            # SDK 宿主（无头会话、桌面应用）发来的输入：没有 origin，有的宿主用自定义标签包一层，照样是你的输入（D-116）
+            self._prompt(s, ts)
         elif s.startswith('<'):
             self._tagged_without_origin(s, ts)
         elif self._saw_origin:
@@ -851,6 +870,8 @@ class Board:
         # 刚发出、还没回复的那次请求属于新回合，开回合时带过去，不清掉（D-111）
         carry = (self._api_pending and self.nodes['model']['state'] == 'active' and ts is not None
                  and self._api_ts is not None and abs(ts - self._api_ts) < 5)
+        # 不写 turn_duration 的会话：下一个回合开始时，上一轮按最后一条流程记录收尾（读历史时前面各轮只能这样收，D-116）
+        self._quiet_end(self._flow_ts, strict=False)
         for n in NODES:
             if n != 'agent' and n != 'prompt':
                 self._set(n, 'idle', None, ts)
@@ -882,6 +903,26 @@ class Board:
 
     def _turn_active(self):
         return self._lv['turn_start'] is not None and self._lv['turn_end'] is None
+
+    def _no_turn_record(self):
+        """记录的 entrypoint 不是 cli 的会话（桌面应用、无头会话）每轮都不写 turn_duration；读不到来源按 cli（05 号件 §三·三）。"""
+        ep = self.entrypoint or self._proc_entry
+        return isinstance(ep, str) and bool(ep) and ep != 'cli'
+
+    def _quiet_end(self, end_ts, strict=True):
+        """不写 turn_duration 的会话收尾。strict：还有在等回复的请求或在途工具时不收。"""
+        # 中断时已记下结束时刻，_turn_active 已不成立，不会再收
+        if not self._no_turn_record() or not self._turn_active():
+            return
+        if strict and (self._api_pending or self._inflight):
+            return
+        start = self._lv['turn_start']
+        if not isinstance(end_ts, (int, float)) or end_ts < start:
+            end_ts = start
+        ms = (end_ts - start) * 1000
+        self._ss['turn_ms'] = ms
+        self.stats['quiet_turn_ends'] += 1
+        self._turn_finished(ms, end_ts)
 
     def _busy(self):
         """回合在进行，或模型、工具已经在跑（记录偶尔晚于模型调用写下）。"""
@@ -1301,8 +1342,8 @@ class Board:
                 self._md['effort'] = oc['effort']
             if isinstance(th, dict) and isinstance(th.get('type'), str):
                 self._md['thinking'] = th['type']
-        if q == 'sdk' and self._headless:
-            # 无头会话（claude -p）的主线程请求写的是 sdk（15 号件 R-12）
+        if q == 'sdk' and (self._headless or self._no_turn_record()):
+            # 无头会话（claude -p）和桌面应用的主线程请求写的是 sdk（15 号件 R-12，D-116）
             q = 'repl_main_thread'
         if q == 'repl_main_thread' or (isinstance(q, str) and q.startswith('agent:')):
             self._open_pending_turn(ts)
@@ -1386,6 +1427,8 @@ class Board:
             self._hk['errors'] += n_err
             self._hook_state(n_err > 0, ts)
             self._add_log('Hook', 'Stop', ts)
+            # 不写 turn_duration 的会话：Stop hook 跑完就是这一轮的最后一条（D-116）
+            self._quiet_end(ts)
         elif sub == 'agents_killed':
             # 你按 ctrl+x ctrl+k 停掉后台子 agent（2.1.322 实测）：记录不带是哪几个，当时在跑的都算被你停止（D-111）
             for aid, a in list(self.agents.items()):

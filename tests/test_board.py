@@ -324,6 +324,23 @@ class 服务(unittest.TestCase):
         self.assertIsNotNone(d['state']['live']['wait']['since'])
         self.assertEqual(d['state']['live']['split']['phase'], 'wait')
 
+    def test_桌面会话进程空闲时收尾并推送来源(self):
+        """05 号件 v10 §三·三（D-116）：桌面会话不写 turn_duration，进程变成 idle 时收尾。"""
+        self.s.registry(os.getpid(), status='busy', entrypoint='claude-desktop')
+        h = dict(rec_human(), entrypoint='claude-desktop')
+        reply = {'type': 'assistant', 'requestId': 'r1', 'timestamp': '2026-11-06T10:00:03.000Z',
+                 'message': {'role': 'assistant', 'content': [{'type': 'text', 'text': '好'}]}}
+        self.s.append([h, dict(rec_api(), querySource='sdk'), reply])
+        self.start(pid=os.getpid())
+        c = self.sse()
+        _, snap = c.next()
+        self.assertIsNone(snap['live']['turn']['end_ts'])
+        self.assertEqual(snap['live']['host'], 'desktop')
+        self.s.registry(os.getpid(), status='idle', entrypoint='claude-desktop')
+        _, d = c.until(lambda e, x: e == 'delta' and x['state']['live']['turn']['end_ts'] is not None)
+        self.assertEqual(d['state']['nodes']['turn']['state'], 'done')
+        self.assertAlmostEqual(d['state']['live']['turn']['ms'], 3000, delta=1)
+
     def test_状态不变时不反复推送(self):
         self.s.registry(os.getpid(), status='busy')
         self.s.append([rec_human(), rec_api()])

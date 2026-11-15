@@ -4,7 +4,7 @@ description: Opens a local live board in your browser that shows where the curre
 disable-model-invocation: true
 allowed-tools: Bash(python3 ${CLAUDE_SKILL_DIR}/scripts/board.py *)
 metadata:
-  version: "0.2.1"
+  version: "0.3.0"
 ---
 !`python3 ${CLAUDE_SKILL_DIR}/scripts/board.py --session ${CLAUDE_SESSION_ID} $ARGUMENTS`
 

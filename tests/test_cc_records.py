@@ -2053,5 +2053,135 @@ class 抽屉数字(unittest.TestCase):
         self.assertEqual((i['source'], i['summary'], i['rounds']), ('你输入', '二', 2))
 
 
+def stop_hook(count=1, errors=None):
+    return {'type': 'system', 'subtype': 'stop_hook_summary', 'hookCount': count, 'hookErrors': errors or [],
+            'preventedContinuation': False, 'timestamp': iso()}
+
+
+def ep(rec, entry):
+    rec['entrypoint'] = entry
+    return rec
+
+
+class 不写turn_duration的会话(unittest.TestCase):
+    """05 号件 v10 §三·三（D-116）：桌面应用、无头会话每轮都不写 turn_duration。"""
+
+    def _turn(self, b):
+        return live(b)['turn']
+
+    def test_桌面会话Stop_hook跑完就收尾(self):
+        b = Board()
+        p = ep(human('x'), 'claude-desktop')
+        feed(b, p, api('sdk'), text('r1'))
+        s = stop_hook()
+        feed(b, s)
+        t = self._turn(b)
+        self.assertEqual(st(b, 'turn'), 'done')
+        self.assertEqual(t['end_ts'], b._lv['turn_end'])
+        self.assertAlmostEqual(t['ms'], (t['end_ts'] - t['start_ts']) * 1000)
+        self.assertEqual(st(b, 'model'), 'done')
+
+    def test_还有在途工具时Stop_hook不收尾(self):
+        b = Board()
+        feed(b, ep(human('x'), 'claude-desktop'), api('sdk'), use('t1'), stop_hook())
+        self.assertNotEqual(st(b, 'turn'), 'done')
+        self.assertIsNone(self._turn(b)['end_ts'])
+
+    def test_进程空闲就收尾_时刻取最后一条流程记录(self):
+        b = Board()
+        feed(b, ep(human('x'), 'claude-desktop'), api('sdk'), think('r1'), text('r1'))
+        last = b._flow_ts
+        feed(b, {'type': 'ai-title', 'aiTitle': '标题', 'timestamp': iso()})
+        b.feed_proc({'status': 'idle', 'entrypoint': 'claude-desktop'})
+        self.assertEqual(st(b, 'turn'), 'done')
+        self.assertEqual(self._turn(b)['end_ts'], last)
+
+    def test_请求还没回复时空闲不收尾_回复到了下一次再收(self):
+        b = Board()
+        feed(b, ep(human('x'), 'claude-desktop'), api('sdk'))
+        b.feed_proc({'status': 'idle', 'entrypoint': 'claude-desktop'})
+        self.assertNotEqual(st(b, 'turn'), 'done')
+        feed(b, text('r1'))
+        b.feed_proc({'status': 'idle', 'entrypoint': 'claude-desktop'})
+        self.assertEqual(st(b, 'turn'), 'done')
+
+    def test_等你批准和忙时不收尾(self):
+        b = Board()
+        feed(b, ep(human('x'), 'claude-desktop'), api('sdk'), text('r1'))
+        b.feed_proc({'status': 'busy', 'entrypoint': 'claude-desktop'})
+        b.feed_proc({'status': 'waiting', 'waitingFor': 'permission prompt', 'entrypoint': 'claude-desktop'})
+        self.assertNotEqual(st(b, 'turn'), 'done')
+
+    def test_读历史时下一句输入收上一轮(self):
+        b = Board()
+        feed(b, ep(human('一'), 'sdk-cli'), api('sdk'), text('r1'))
+        last = b._flow_ts
+        p2 = ep(human('二'), 'sdk-cli')
+        feed(b, p2)
+        self.assertEqual(b.stats['quiet_turn_ends'], 1)
+        self.assertEqual(cnt(b, 'rounds'), 2)
+        self.assertIsNone(self._turn(b)['end_ts'])
+        # 上一轮在新回合开始前按最后一条流程记录收尾，回合结束的日志写在那个时刻
+        self.assertTrue(any(e.get('ts') == last for e in b.snapshot()['log'] if isinstance(e, dict)))
+
+    def test_终端会话不按这些信号收尾(self):
+        b = Board()
+        feed(b, ep(human('x'), 'cli'), api(), text('r1'), stop_hook())
+        self.assertNotEqual(st(b, 'turn'), 'done')
+        b.feed_proc({'status': 'idle', 'entrypoint': 'cli'})
+        self.assertNotEqual(st(b, 'turn'), 'done')
+        feed(b, turn_end())
+        self.assertEqual(st(b, 'turn'), 'done')
+        self.assertEqual(b.stats['quiet_turn_ends'], 0)
+
+    def test_读不到来源按终端处理(self):
+        b = Board()
+        feed(b, human('x'), api(), text('r1'), stop_hook())
+        b.feed_proc({'status': 'idle'})
+        self.assertNotEqual(st(b, 'turn'), 'done')
+
+    def test_来源只在进程文件里时也认(self):
+        b = Board()
+        b.feed_proc({'status': 'busy', 'entrypoint': 'claude-desktop'})
+        feed(b, human('x'), api('sdk'), text('r1'))
+        b.feed_proc({'status': 'idle', 'entrypoint': 'claude-desktop'})
+        self.assertEqual(st(b, 'turn'), 'done')
+        self.assertEqual(live(b)['host'], 'desktop')
+
+    def test_中断以后不再收尾(self):
+        b = Board()
+        feed(b, ep(human('x'), 'claude-desktop'), api('sdk'), use('t1'), result('t1', err=True, decision=None),
+             bare('[Request interrupted by user for tool use]'), stop_hook())
+        self.assertEqual(st(b, 'turn'), 'interrupted')
+        self.assertEqual(b.stats['quiet_turn_ends'], 0)
+
+    def test_桌面会话的sdk请求点亮模型调用(self):
+        b = Board()
+        feed(b, ep(human('x'), 'claude-desktop'), api('sdk'))
+        self.assertEqual(st(b, 'model'), 'active')
+
+    def test_SDK宿主发来的输入算prompt_自定义标签包着也算(self):
+        b = Board()
+        feed(b, bare('<some_host_prompt_bundle>帮我做个页面</some_host_prompt_bundle>', entrypoint='sdk-cli', promptSource='sdk'))
+        self.assertEqual(cnt(b, 'rounds'), 1)
+        self.assertFalse(b.degraded.get('prompt'))
+        self.assertEqual(b.stats['non_human_prompts'], 0)
+
+    def test_桌面会话没有origin的输入也不算退化(self):
+        b = Board()
+        feed(b, bare('你好', entrypoint='claude-desktop', promptSource='sdk'))
+        self.assertEqual(cnt(b, 'rounds'), 1)
+        self.assertFalse(b.degraded.get('prompt'))
+
+    def test_host按来源取值(self):
+        for entry, host in (('cli', 'terminal'), ('claude-desktop', 'desktop'), ('sdk-cli', None), (None, None)):
+            b = Board()
+            r = human('x')
+            if entry:
+                r['entrypoint'] = entry
+            feed(b, r)
+            self.assertEqual(live(b)['host'], host, entry)
+
+
 if __name__ == '__main__':
     unittest.main(verbosity=1)

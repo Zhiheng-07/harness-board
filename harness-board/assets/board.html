@@ -740,6 +740,22 @@ button:focus-visible{outline:2px solid currentColor;outline-offset:2px}
   </div>
 </main>
 <script>
+
+/* 「去哪里处理」按会话来源写（D-116）：终端／桌面应用／认不出来源时不提地点。原型脚本里写死的几处换成调这几个函数。
+   插在整段脚本最前面（board_live.js 的代码在 if(LIVE){…} 块里，块里的函数原型脚本调不到） */
+function dgAt(W,en){return W.host==='terminal'?(en?' in the terminal':'终端里'):W.host==='desktop'?(en?' in the desktop app':'桌面应用里'):''}
+function dgWaitSay(W,en){const p=W.wait==='permission';
+  return en?(p?'A dialog':'A question')+dgAt(W,1)+(p?' is waiting for your approval.':' is waiting for your answer.'):dgAt(W,0)+(p?'有弹窗等你批准。':'有问题等你回答。')}
+function dgWaitLab(W){const o=W.wait==='other';
+  return W.host==='terminal'?(o?'◆ 终端里有对话框':'◆ 终端等待处理'):W.host==='desktop'?(o?'◆ 桌面应用里有对话框':'◆ 桌面应用等待处理'):(o?'◆ 有对话框等你处理':'◆ 等你处理')}
+function dgOtherSay(W){return dgAt(W,0)+(W.waitText?'开着一个对话框（'+W.waitText+'）。处理完，看板接着走。':'开着一个对话框。处理完，看板接着走。')}
+function dgSwSay(W,prev){return(W.host==='terminal'?'同一个终端换了会话，上一个是「':'换了会话，上一个是「')+prev+'」'}
+/* 横幅标签放不下（窄窗口的英文最容易）：两侧斜纹任一侧不足 12 像素时，改用不提地点的短说法，地点由下面的说明交代；
+   每次刷新都先放完整说法再量，窗口变宽能换回来（D-116） */
+function dgFitLab(W,bn){const lab=bn.querySelector('.lab'),L=bn.querySelector('.hz.l'),R=bn.querySelector('.hz.r');if(!lab||!L||!R)return;
+  const b=lab.querySelector('b');setText(b,dgWaitLab(W));
+  if(Math.min(L.getBoundingClientRect().width,R.getBoundingClientRect().width)<12)setText(b,W.wait==='other'?'◆ 有对话框等你处理':'◆ 等你处理')}
+
 'use strict';
 /* ==================== 工具函数 ==================== */
 const I18N={lang:'zh',tr:s=>s};
@@ -957,7 +973,7 @@ function nowLine(W,clock){
   if(W.note&&clock-W.note.t<6)memo=W.note.text;
   else if(W.late&&clock-W.late.t<4.5)memo='刚刚：'+W.late.text+(W.late.rej?'':'。结束后才看到');
   if(W.conn==='lost')return{l:'已断开',s:'画面已冻结。服务恢复后会自动重连。',c:'bad'};
-  if(W.wait)return{l:W.wait==='permission'?'等你批准':'等你回答',s:W.wait==='permission'?'终端里有弹窗等你批准。':'终端里有问题等你回答。',c:'wait'};
+  if(W.wait)return{l:W.wait==='permission'?'等你批准':'等你回答',s:dgWaitSay(W,0),c:'wait'};
   if(W.stale)return{l:`已 ${W.stale} 秒无新记录`,s:W.procStatus==='idle'?'Claude Code 已空闲，这一轮没有写结束记录。':W.procAvail===false?'读不到 Claude Code 的进程状态。':'Claude Code 仍在运行。自动压缩时就是这样，完成后才有记录。',c:'dim'};
   const run=W.tools.filter(t=>t.state==='run');
   if(run.length){const t=run[run.length-1];return{l:`${verb(t.name)} ${t.short}`,s:memo||(run.length>1?`同时还有 ${run.length-1} 个在跑`:'工具执行中'),c:'act'}}
@@ -1660,7 +1676,7 @@ function nowLineEn(W,clock){
   if(W.note&&clock-W.note.t<6&&W.ctx.last)memo=W.note.text&&W.note.text.startsWith('压缩完成')?`Compaction done: ${fmtK(W.ctx.last.pre)} → ${fmtK(W.ctx.last.post)}.`:`Just compacted: ${fmtK(W.ctx.last.pre)} → ${fmtK(W.ctx.last.post)}. Not recorded at the start; known only afterwards.`;
   else if(W.late&&clock-W.late.t<4.5){const t=W.tools.filter(x=>W.late.id&&x.id===W.late.id).pop()||W.tools.filter(x=>x.t0===W.late.t).pop();if(t)memo=W.late.rej?`Just now: denied: ${t.name} ${shortEn(t.short)}`:`Just now: ${verbEn(t.name,true)} ${shortEn(t.short)}. Seen only after it ended`}
   if(W.conn==='lost')return{l:'Disconnected',s:'Display frozen. Reconnects automatically when the service is back.',c:'bad'};
-  if(W.wait)return{l:W.wait==='permission'?'Awaiting approval':'Awaiting your answer',s:W.wait==='permission'?'A dialog in the terminal is waiting for your approval.':'A question in the terminal is waiting for your answer.',c:'wait'};
+  if(W.wait)return{l:W.wait==='permission'?'Awaiting approval':'Awaiting your answer',s:dgWaitSay(W,1),c:'wait'};
   if(W.stale)return{l:`No new records for ${W.stale}s`,s:W.procStatus==='idle'?'Claude Code is idle; this turn has no end record.':W.procAvail===false?"Can't read Claude Code's process state.":"Claude Code is still running. Auto-compaction looks like this; it's recorded only when done.",c:'dim'};
   const run=W.tools.filter(t=>t.state==='run');
   if(run.length){const t=run[run.length-1];return{l:`${verbEn(t.name)} ${shortEn(t.short)}`,s:memo||(run.length>1?`${run.length-1} more running`:'Tool running'),c:'act'}}
@@ -1752,10 +1768,10 @@ function dgFootSync(W){
 function dgBanner(W){
   const bn=$('#banner'),mode=W.conn==='lost'?'lost':W.wait?'wait':dgSw?'sw':'',key=mode+(W.exited?'·x':'')+(W.wait==='other'?'·o':'');
   if(bn.dataset.m!==mode||bn.dataset.k!==key){bn.dataset.m=mode;bn.dataset.k=key;bn.textContent='';
-    if(mode==='wait'){bn.appendChild(el('i','hz l'));const lab=el('span','lab');lab.appendChild(el('b',null,W.wait==='other'?'◆ 终端里有对话框':'◆ 终端等待处理'));lab.appendChild(el('b','wt'));bn.appendChild(lab);bn.appendChild(el('i','hz r'))}
+    if(mode==='wait'){bn.appendChild(el('i','hz l'));const lab=el('span','lab');lab.appendChild(el('b',null,dgWaitLab(W)));lab.appendChild(el('b','wt'));bn.appendChild(lab);bn.appendChild(el('i','hz r'))}
     else if(mode==='lost')bn.textContent=I18N.tr(W.exited?'Claude Code 已退出 · 画面已冻结':'已断开 · 画面已冻结');
-    else if(mode==='sw'){bn.appendChild(el('i','swk'));bn.appendChild(el('b',null,'已跟到新会话'));bn.appendChild(el('span','swm','同一个终端换了会话，上一个是「'+dgSw.prev+'」'))}}
-  if(mode==='wait')setText(bn.querySelector('.wt'),'已等 '+fmtT(clock-(W.waitT!=null?W.waitT:clock)));
+    else if(mode==='sw'){bn.appendChild(el('i','swk'));bn.appendChild(el('b',null,'已跟到新会话'));bn.appendChild(el('span','swm',dgSwSay(W,dgSw.prev)))}}
+  if(mode==='wait'){setText(bn.querySelector('.wt'),'已等 '+fmtT(clock-(W.waitT!=null?W.waitT:clock)));dgFitLab(W,bn)}
   frame.dataset.sw=mode==='sw'?'1':'0';
 }
 
@@ -2137,7 +2153,7 @@ const rsFailedAgent=W=>W.agentFail&&!W.agents.some(a=>a.state==='run')?W.agentFa
 function rsLine(W){
   if(W.exited)return{l:'Claude Code 已退出',s:'会话结束了，画面停在最后一刻。看板随后关闭，下次用 /harness-board 再打开。',c:'bad'};
   if(W.conn==='lost')return null;
-  if(W.wait==='other')return{l:'等你操作',s:W.waitText?'终端里开着一个对话框（'+W.waitText+'）。处理完，看板接着走。':'终端里开着一个对话框。处理完，看板接着走。',c:'wait'};
+  if(W.wait==='other')return{l:'等你操作',s:dgOtherSay(W),c:'wait'};
   if(W.wait||W.stale)return null;
   if(W.unk&&rsRun(W))return{l:'执行中或等你批准',s:'读不到 Claude Code 的进程状态，所以分不出工具是在跑，还是在等你批准。',c:'act'};
   if(W.ctx.compacting)return{l:'正在压缩上下文',s:'你输入了 /compact。手动压缩开始和结束都有记录；自动压缩只能事后知道。',c:'act'};
@@ -2211,9 +2227,17 @@ window.__proto={get layouts(){return layoutNow.n||0},get fx(){return Fx.items.le
  /* 权限模式（D-108）：定稿写「自动」，其余按 Claude Code 的叫法 */
  ['手动','manual'],['计划','plan'],['改文件','edits'],['全放行','bypass'],
  /* 等你时的说明（D-110，正式页面由 build_board.py 换掉原型里的旧句） */
- ['终端里有弹窗等你批准。','A dialog in the terminal is waiting for your approval.'],['终端里有问题等你回答。','A question in the terminal is waiting for your answer.']
+ ['终端里有弹窗等你批准。','A dialog in the terminal is waiting for your approval.'],['终端里有问题等你回答。','A question in the terminal is waiting for your answer.'],
+ /* 桌面应用、认不出来源时的说法（D-116） */
+ ['桌面应用里有弹窗等你批准。','A dialog in the desktop app is waiting for your approval.'],['桌面应用里有问题等你回答。','A question in the desktop app is waiting for your answer.'],
+ ['有弹窗等你批准。','A dialog is waiting for your approval.'],['有问题等你回答。','A question is waiting for your answer.'],
+ ['◆ 桌面应用等待处理','◆ Waiting in the desktop app'],['◆ 等你处理','◆ Waiting for you'],['◆ 桌面应用里有对话框','◆ Dialog open in the desktop app'],['◆ 有对话框等你处理','◆ Dialog open'],
+ ['桌面应用里开着一个对话框。处理完，看板接着走。','A dialog is open in the desktop app. Once you deal with it, the board carries on.'],['开着一个对话框。处理完，看板接着走。','A dialog is open. Once you deal with it, the board carries on.']
 ].forEach(([z,e])=>{if(!EX.has(z))EX.set(z,e)});
 {const SFX={'已拒绝':'denied','出错':'error','被中断':'interrupted'};
+FULL.push([/^桌面应用里开着一个对话框（(.+)）。处理完，看板接着走。$/,(m,s)=>'A dialog is open in the desktop app ('+s+'). Once you deal with it, the board carries on.'],
+  [/^开着一个对话框（(.+)）。处理完，看板接着走。$/,(m,s)=>'A dialog is open ('+s+'). Once you deal with it, the board carries on.'],
+  [/^换了会话，上一个是「(.+)」$/,(m,s)=>'Switched sessions; previous: “'+s+'”']);
 FULL.push([/^(.+?) 约 ([\d.]+) 秒(?:（(已拒绝|出错|被中断)）)?$/,(m,s,n,x)=>s+' ~'+n+'s'+(x?' ('+SFX[x]+')':'')],
   [/^(.+)（(已拒绝|出错|被中断)）$/,(m,s,x)=>s+' ('+SFX[x]+')'],[/^(\d+)h(\d\d)m$/,m=>m],[/^([\d.]+) 秒$/,(m,n)=>n+'s'],[/^第 (\d+) 次（推断）$/,(m,n)=>'#'+n+' (inferred)'],
   [/^写 ([^·]+)$/,(m,s)=>'wrote '+s],[/^origin：(.+)$/,(m,s)=>'origin: '+s],
@@ -2279,7 +2303,7 @@ if(LIVE){
     const C=L.compact||{};w.ctx.compacts=C.count||0;w.ctx.last=C.last&&C.last.pre!=null?{pre:C.last.pre,post:C.last.post}:null;
     w.tasks=(L.tasks||[]).map(t=>({s:t.subject||'',st:t.status}));
     w.checkpoints=(L.checkpoints||{}).edits||0;
-    const W8=L.wait||{};w.wait=['permission','input','other'].includes(W8.kind)?W8.kind:null;w.waitT=w.wait?rel(W8.since):null;w.waitText=W8.kind==='other'?(W8.text||''):'';
+    const W8=L.wait||{};w.wait=['permission','input','other'].includes(W8.kind)?W8.kind:null;w.waitT=w.wait?rel(W8.since):null;w.waitText=W8.kind==='other'?(W8.text||''):'';w.host=L.host==='terminal'||L.host==='desktop'?L.host:null;
     w.idle=se.proc_status==='idle'&&!active;
     /* 已退出：画面冻结在最后一刻，之后不再变成「已断开」；读不到进程状态：只冻中、下两块（D-98） */
     w.exited=se.proc_status==='exited';if(w.exited)w.conn='lost';
