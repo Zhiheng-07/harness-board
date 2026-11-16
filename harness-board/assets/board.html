@@ -423,7 +423,7 @@ button:focus-visible{outline:2px solid currentColor;outline-offset:2px}
 #frame[data-form=latticefui] .read .bar{display:none!important}
 #frame[data-tier=half][data-form=latticefui] #reads{grid-template-columns:repeat(3,minmax(0,1fr));width:100%!important;align-self:stretch}
 #frame[data-tier=narrow][data-form=latticefui] #reads{grid-template-columns:repeat(2,minmax(0,1fr));gap:6px 8px}
-#frame[data-tier=narrow][data-form=latticefui] .read{padding:2px 8px}
+#frame[data-tier=narrow][data-form=latticefui] .read{padding:2px 12px}
 #frame[data-tier=narrow][data-form=latticefui] .read label{width:3.55em}
 
 /* 模型卡：直接写模型名（Montserrat 800／思源黑体 700），下面一行推理强度（D-76、D-79、D-80） */
@@ -575,8 +575,10 @@ button:focus-visible{outline:2px solid currentColor;outline-offset:2px}
    括号里左右留白都是数值字号的 0.93 倍、栏间距 0.571 倍（1440 宽时 13 和 8）；宽屏随字号放大，不再按窗口宽度拉长 */
 #frame[data-form=latticefui]:not([data-tier=narrow]) #reads{grid-template-columns:repeat(2,max-content)}
 #frame[data-tier=half][data-form=latticefui] #reads{grid-template-columns:repeat(3,max-content)}
-#frame[data-form=latticefui]:not([data-tier=narrow]) .read{gap:calc(var(--l3) * .571);padding-left:calc(var(--l3) * .93);padding-right:calc(var(--l3) * .93)}
-#frame[data-form=latticefui]:not([data-tier=narrow]) .read small{flex:0 0 auto;min-width:0;max-width:10em}
+/* 括号里左右留白全局 12（D-124，原来是数值字号的 0.93 倍）；补充撑满贴右，同一列的补充右边对齐（轮播的照旧从开头排） */
+#frame[data-form=latticefui]:not([data-tier=narrow]) .read{gap:calc(var(--l3) * .571);padding-left:12px;padding-right:12px}
+#frame[data-form=latticefui]:not([data-tier=narrow]) .read small{flex:1 0 auto;min-width:0;max-width:10em}
+#frame[data-form=latticefui]:not([data-tier=narrow]) .read small:not(.mq){text-align:right}
 #frame[data-form=latticefui]:not([data-tier=narrow]) .read small:empty{display:none}
 /* 节点卡：名称行高 1.32，第二行文字落在定稿的位置（名称行 22.5，间距 2） */
 #frame[data-form=latticefui] .n.n3:not(.mc) .h3 b{line-height:1.32}
@@ -745,16 +747,21 @@ button:focus-visible{outline:2px solid currentColor;outline-offset:2px}
    插在整段脚本最前面（board_live.js 的代码在 if(LIVE){…} 块里，块里的函数原型脚本调不到） */
 function dgAt(W,en){return W.host==='terminal'?(en?' in the terminal':'终端里'):W.host==='desktop'?(en?' in the desktop app':'桌面应用里'):''}
 function dgWaitSay(W,en){const p=W.wait==='permission';
+  /* Codex 等批准时记录里什么都不写，只能从「这一步申请了出沙箱」推测（D-121） */
+  if(p&&W.waitGuess)return en?'This step asked to run outside the sandbox. A dialog'+dgAt(W,1)+' may be waiting for your approval.':'这一步申请了出沙箱，'+dgAt(W,0)+'可能有弹窗等你批准。';
   return en?(p?'A dialog':'A question')+dgAt(W,1)+(p?' is waiting for your approval.':' is waiting for your answer.'):dgAt(W,0)+(p?'有弹窗等你批准。':'有问题等你回答。')}
 function dgWaitLab(W){const o=W.wait==='other';
+  if(W.wait==='permission'&&W.waitGuess)return W.host==='terminal'?'◆ 终端里可能在等你':W.host==='desktop'?'◆ 桌面应用里可能在等你':'◆ 可能在等你';
   return W.host==='terminal'?(o?'◆ 终端里有对话框':'◆ 终端等待处理'):W.host==='desktop'?(o?'◆ 桌面应用里有对话框':'◆ 桌面应用等待处理'):(o?'◆ 有对话框等你处理':'◆ 等你处理')}
+/* 产品（Claude Code 或 Codex，D-121）：已退出的横幅、事件 */
+function dgExitBanner(W){return W.product==='codex'?'Codex 已关闭这个会话 · 画面已冻结':'Claude Code 已退出 · 画面已冻结'}
 function dgOtherSay(W){return dgAt(W,0)+(W.waitText?'开着一个对话框（'+W.waitText+'）。处理完，看板接着走。':'开着一个对话框。处理完，看板接着走。')}
 function dgSwSay(W,prev){return(W.host==='terminal'?'同一个终端换了会话，上一个是「':'换了会话，上一个是「')+prev+'」'}
 /* 横幅标签放不下（窄窗口的英文最容易）：两侧斜纹任一侧不足 12 像素时，改用不提地点的短说法，地点由下面的说明交代；
    每次刷新都先放完整说法再量，窗口变宽能换回来（D-116） */
 function dgFitLab(W,bn){const lab=bn.querySelector('.lab'),L=bn.querySelector('.hz.l'),R=bn.querySelector('.hz.r');if(!lab||!L||!R)return;
   const b=lab.querySelector('b');setText(b,dgWaitLab(W));
-  if(Math.min(L.getBoundingClientRect().width,R.getBoundingClientRect().width)<12)setText(b,W.wait==='other'?'◆ 有对话框等你处理':'◆ 等你处理')}
+  if(Math.min(L.getBoundingClientRect().width,R.getBoundingClientRect().width)<12)setText(b,W.wait==='other'?'◆ 有对话框等你处理':W.wait==='permission'&&W.waitGuess?'◆ 可能在等你':'◆ 等你处理')}
 
 'use strict';
 /* ==================== 工具函数 ==================== */
@@ -1454,12 +1461,12 @@ const LatticeFui=Object.assign({},Lattice,{
     if(!this.L)return;const C=this.c,set=(k,state,main,tag,sub,empty)=>{const b=C[k];b.dataset.state=state;b.dataset.empty=empty?'1':'0';setText(b.querySelector('b'),main);setText(b.querySelector('.tg'),tag);setText(b.querySelector('em'),sub);{const tt=b.querySelector('em').textContent;if(b.title!==tt)b.title=tt}};
     ['input','memory','skills','mcp'].forEach(id=>{const s=W.station(id);set(id,s.s,NAME[id],TAG3[s.s],s.s==='idle'?'—':s.v)});
     {const s=W.station('context'),sc=ctxScale(W.ctx.peak||1);set('context',s.s,'上下文',W.inject?'+'+W.inject+' 条':'未到',W.ctx.tokens?fmtK(W.ctx.tokens):'—');C.context.title=''}
-    {const s=W.station('hook');set('hook',s.s,'Hook',TAG3[s.s],s.s==='idle'?'—':s.v)}
-    {const s=W.station('perm');set('perm',s.s,'权限',TAG3[s.s],s.s==='idle'?'—':s.v)}
+    {const s=W.station('hook'),cx=W.product==='codex';set('hook',cx?'idle':s.s,'Hook',cx?'无记录':TAG3[s.s],cx?'Codex 不记录':s.s==='idle'?'—':s.v)}
+    {const s=W.station('perm');set('perm',s.s,'权限',W.review&&s.s==='active'?'审核':W.waitGuess&&s.s==='wait'?'可能':TAG3[s.s],s.s==='idle'?'—':s.v)}
     {const s=W.station('end');set('end',W.turn.active?'active':s.s,'回合',W.turn.active?'进行':TAG3[s.s],W.turn.active?'进行中':s.s==='idle'?'—':s.v)}
     {const s=W.station('model');set('model',W.wait?'wait':s.s,W.model.n?MODEL_INFO.label:'模型','',W.model.n?(MODEL_INFO.effort?'推理强度 '+MODEL_INFO.effort:''):'—');C.model.title=W.model.n?I18N.tr('模型 '+MODEL_INFO.id+(MODEL_INFO.effort?' · 推理强度 '+MODEL_INFO.effort:'')):'';setText(C.model.querySelector('small'),W.think&&world.t-W.think.t<4?'思考 '+(W.think.ms/1000).toFixed(1)+' 秒':'')}
     W.slots.forEach((t,i)=>{const k='s'+i;if(!t){const first=W.slots.findIndex(x=>!x)===i&&!W.toolCount;set(k,'idle',first?'工具':'',first?'未到':'',first?'—':'',!first);return}
-      const st=t.state==='run'?'active':t.state==='ok'?'done':'error',tag=t.state==='run'?'运行中':t.state==='err'?'出错':t.state==='rej'?'已拒绝':isLate(t)?'刚刚':'完成';set(k,st,t.name,tag,t.short)});
+      const st=t.state==='run'?'active':t.state==='ok'?'done':'error',tag=t.state==='run'?(W.review?'等审核':'运行中'):t.state==='err'?'出错':t.state==='rej'?'已拒绝':isLate(t)?'刚刚':'完成';set(k,st,t.name,tag,t.short)});
     {const g=W.agents[W.agents.length-1],run=W.agents.filter(a=>a.state==='run').length;set('agent',run?'active':g?'done':'idle','子 agent',run?(run>1?'运行 '+run:'运行中'):g?'已结束':'未到',g?g.step+' · '+g.type:'—')}
     syncTail(W,true);this.applyFloors(W);
   },
@@ -1538,7 +1545,7 @@ function renderUI(force){
     if(!REDUCED&&form.id!=='circuit'&&!form.typed){void L.offsetWidth;L.classList.add('swap')}}
   setText($('#sub'),n.s);
   const sc=ctxScale(W.ctx.peak||1);
-  const c2=form.id==='latticefui';setText(reads.ctx.b,W.ctx.tokens?fmtK(W.ctx.tokens):'—');reads.ctx.u.style.width=(c2?0:W.ctx.tokens/sc*100).toFixed(1)+'%';if(c2){setText(reads.ctx.s,W.ctx.compacts?'压缩 '+W.ctx.compacts:'');if(reads.ctx.d.title)reads.ctx.d.title=''}else setText(reads.ctx.s,W.ctx.tokens?'刻度 '+fmtK(sc)+(W.ctx.compacts?' · 压缩 '+W.ctx.compacts+' 次':''):'');
+  const c2=form.id==='latticefui';setText(reads.ctx.b,W.ctx.tokens?fmtK(W.ctx.tokens):'—');reads.ctx.u.style.width=(c2?0:W.ctx.tokens/sc*100).toFixed(1)+'%';if(c2){setText(reads.ctx.s,W.ctxLeft!=null?'剩 '+W.ctxLeft+'%':W.ctx.compacts?'压缩 '+W.ctx.compacts:'');if(reads.ctx.d.title)reads.ctx.d.title=''}else setText(reads.ctx.s,W.ctx.tokens?'刻度 '+fmtK(sc)+(W.ctx.compacts?' · 压缩 '+W.ctx.compacts+' 次':''):'');
   const sec=W.turn.start==null?0:W.turn.active?clock-W.turn.start:W.turn.sec;setText(reads.time.b,fmtT(sec));setText(reads.time.s,W.turn.active?'进行中':W.turn.sec!=null?'已结束':'');
   setText(reads.model.b,W.model.n+' 次');setText(reads.model.s,W.model.thinkN?'思考 '+W.model.thinkN+' 段':'');
   setText(reads.tools.b,W.toolCount+' 次');setText(reads.tools.s,W.inflight?'在途 '+W.inflight:W.errs?'出错 '+W.errs:'');
@@ -1769,7 +1776,7 @@ function dgBanner(W){
   const bn=$('#banner'),mode=W.conn==='lost'?'lost':W.wait?'wait':dgSw?'sw':'',key=mode+(W.exited?'·x':'')+(W.wait==='other'?'·o':'');
   if(bn.dataset.m!==mode||bn.dataset.k!==key){bn.dataset.m=mode;bn.dataset.k=key;bn.textContent='';
     if(mode==='wait'){bn.appendChild(el('i','hz l'));const lab=el('span','lab');lab.appendChild(el('b',null,dgWaitLab(W)));lab.appendChild(el('b','wt'));bn.appendChild(lab);bn.appendChild(el('i','hz r'))}
-    else if(mode==='lost')bn.textContent=I18N.tr(W.exited?'Claude Code 已退出 · 画面已冻结':'已断开 · 画面已冻结');
+    else if(mode==='lost')bn.textContent=I18N.tr(W.exited?dgExitBanner(W):'已断开 · 画面已冻结');
     else if(mode==='sw'){bn.appendChild(el('i','swk'));bn.appendChild(el('b',null,'已跟到新会话'));bn.appendChild(el('span','swm',dgSwSay(W,dgSw.prev)))}}
   if(mode==='wait'){setText(bn.querySelector('.wt'),'已等 '+fmtT(clock-(W.waitT!=null?W.waitT:clock)));dgFitLab(W,bn)}
   frame.dataset.sw=mode==='sw'?'1':'0';
@@ -2145,7 +2152,7 @@ const rsFailedAgent=W=>W.agentFail&&!W.agents.some(a=>a.state==='run')?W.agentFa
       case'compact':this.ctx.compacting=false;if(e.trigger==='manual'){this.note={text:`压缩完成：${fmtK(e.pre)} → ${fmtK(e.post)}。`,t:e.t};const l=lastLog('压缩');if(l)l.sum=`手动 · ${fmtK(e.pre)} → ${fmtK(e.post)}`}break;
       case'exit':this.conn='lost';this.exited=true;this.model.active=false;
         if(this.turn.active){this.turn.active=false;if(this.turn.start!=null)this.turn.sec=Math.round(e.t-this.turn.start);this.marks.push({kind:'turn',rt:this.busyT,sec:this.turn.sec,t:e.t})}
-        this.addLog('已退出','Claude Code 已退出');break;
+        this.addLog(this.product==='codex'?'已关闭':'已退出',this.product==='codex'?'Codex 已关闭这个会话':'Claude Code 已退出');break;
     }
     if(e.k==='intr'||e.k==='exit')this.busy=(this.turn.active||this.agents.some(a=>a.state==='run'))&&this.conn==='live';
   };}
@@ -2180,7 +2187,7 @@ function rsReads(W){
   if(W.turn.intr&&!W.turn.active)setText(reads.time.s,'中断');
   if(W.model.err)setText(reads.model.s,'出错 '+W.model.err);
   if(W.ctx.compacting)setText(reads.ctx.s,'压缩中');
-  if(W.exited)setText(reads.mode.s,'已退出');
+  if(W.exited)setText(reads.mode.s,W.product==='codex'?'已关闭':'已退出');
   frame.dataset.exit=W.exited?'1':'0';frame.dataset.unk=W.unk&&W.conn==='live'?'1':'0';
 }
 [['中断','Interrupted'],['API 错误','API error'],['失败','Failed'],['压缩中','Compacting'],['等你操作','Waiting for you'],['状态未知','Status unknown'],['已退出','Exited'],
@@ -2232,7 +2239,22 @@ window.__proto={get layouts(){return layoutNow.n||0},get fx(){return Fx.items.le
  ['桌面应用里有弹窗等你批准。','A dialog in the desktop app is waiting for your approval.'],['桌面应用里有问题等你回答。','A question in the desktop app is waiting for your answer.'],
  ['有弹窗等你批准。','A dialog is waiting for your approval.'],['有问题等你回答。','A question is waiting for your answer.'],
  ['◆ 桌面应用等待处理','◆ Waiting in the desktop app'],['◆ 等你处理','◆ Waiting for you'],['◆ 桌面应用里有对话框','◆ Dialog open in the desktop app'],['◆ 有对话框等你处理','◆ Dialog open'],
- ['桌面应用里开着一个对话框。处理完，看板接着走。','A dialog is open in the desktop app. Once you deal with it, the board carries on.'],['开着一个对话框。处理完，看板接着走。','A dialog is open. Once you deal with it, the board carries on.']
+ ['桌面应用里开着一个对话框。处理完，看板接着走。','A dialog is open in the desktop app. Once you deal with it, the board carries on.'],['开着一个对话框。处理完，看板接着走。','A dialog is open. Once you deal with it, the board carries on.'],
+ /* Codex 会话（D-121、D-125，20 号件 §六） */
+ ['可能在等你批准','may need approval'],['自动审核中','Auto-reviewing'],['自动审核放行','Auto-review allowed'],['自动审核拒绝','Auto-review denied'],['沙箱内运行','Ran in sandbox'],
+ ['无记录','none'],['Codex 不记录','not recorded'],['审核','review'],['可能','maybe'],['等审核','reviewing'],
+ ['不问','never'],['按需','on-request'],['多问','untrusted'],['细分','granular'],['失败时问','on-failure'],['已关闭','Closed'],
+ ['派子 agent','Spawn agent'],['看图片','View image'],['等待命令输出','waiting for command output'],
+ ['你排队的输入','Queued by you'],['自动化','Automation'],['你的回答','Your answer'],['系统消息','System message'],['新建对话','New thread'],['未知','Unknown'],
+ ['后台命令结束','Background command done'],['自动审核','Auto-review'],['最终回答','final answer'],['开始','started'],['放行','allowed'],['拒绝','denied'],
+ ['Codex 已关闭这个会话','Codex closed this session'],['Codex 已关闭这个会话 · 画面已冻结','Codex closed this session · display frozen'],
+ ['会话结束了，画面停在最后一刻。看板随后关闭，下次用 $harness-board 再打开。','The session has ended; the board shows its last moment and will close. Run $harness-board to open it again.'],
+ ['间隙：步骤之间 Codex 自己准备、等压缩的时间','Gaps: time Codex spends preparing between steps or waiting for compaction'],
+ ['◆ 终端里可能在等你','◆ May be waiting in terminal'],['◆ 桌面应用里可能在等你','◆ May be waiting in the desktop app'],['◆ 可能在等你','◆ May be waiting for you'],
+ ['这一步申请了出沙箱，终端里可能有弹窗等你批准。','This step asked to run outside the sandbox. A dialog in the terminal may be waiting for your approval.'],
+ ['这一步申请了出沙箱，桌面应用里可能有弹窗等你批准。','This step asked to run outside the sandbox. A dialog in the desktop app may be waiting for your approval.'],
+ ['这一步申请了出沙箱，可能有弹窗等你批准。','This step asked to run outside the sandbox. A dialog may be waiting for your approval.'],
+ ['这一步申请了出沙箱，Codex 的自动审核在判断，一般十几秒。','This step asked to run outside the sandbox. Codex auto-review is deciding; it usually takes about ten seconds.']
 ].forEach(([z,e])=>{if(!EX.has(z))EX.set(z,e)});
 {const SFX={'已拒绝':'denied','出错':'error','被中断':'interrupted'};
 FULL.push([/^桌面应用里开着一个对话框（(.+)）。处理完，看板接着走。$/,(m,s)=>'A dialog is open in the desktop app ('+s+'). Once you deal with it, the board carries on.'],
@@ -2243,9 +2265,13 @@ FULL.push([/^(.+?) 约 ([\d.]+) 秒(?:（(已拒绝|出错|被中断)）)?$/,(m,
   [/^写 ([^·]+)$/,(m,s)=>'wrote '+s],[/^origin：(.+)$/,(m,s)=>'origin: '+s],
   [/^(子 agent 交回|其他会话|协调者|自动继续)：(.+)$/,(m,s,n)=>EX.get(s)+': '+n],
   /* 处理出错的记录条数（15 号件 R-10） */
-  [/^(\d+) 条记录处理出错$/,(m,n)=>n+' record'+(+n===1?'':'s')+' failed to process']);}
+  [/^(\d+) 条记录处理出错$/,(m,n)=>n+' record'+(+n===1?'':'s')+' failed to process'],
+  /* Codex（D-125）：上下文剩多少、推测的等批准、模型出错原因 */
+  [/^剩 (\d+)%$/,(m,n)=>n+'% left'],[/^可能 · (.+)$/,(m,s)=>'maybe · '+s],[/^出错（(.+)）$/,(m,s)=>'error ('+s+')']);}
 /* 权限模式的显示名（D-108）：原始值直接显示时 default 会压到旁边的连接状态 */
-const MODE_NAME={auto:'自动','default':'手动',plan:'计划',acceptEdits:'改文件',bypassPermissions:'全放行'};
+const MODE_NAME={auto:'自动','default':'手动',plan:'计划',acceptEdits:'改文件',bypassPermissions:'全放行',
+  /* Codex 的批准方式写中文简称，英文照原名（D-125） */
+  never:'不问','on-request':'按需',untrusted:'多问',granular:'细分','on-failure':'失败时问'};
 const LIVE=(()=>{try{return new URLSearchParams(location.search).has('t')}catch(e){return false}})();
 if(LIVE){
   frame.dataset.live='1';
@@ -2282,8 +2308,10 @@ if(LIVE){
     w.inflight=c.inflight||0;w.toolCount=T.tool_calls||0;w.errs=DT.errors_turn!=null?DT.errors_turn:cur.filter(t=>t.state==='err').length;
     w.cats={};if(DT.cats_turn)Object.entries(DT.cats_turn).forEach(([k,v])=>{const ck=CAT[k]||'other';w.cats[ck]=(w.cats[ck]||0)+v});else cur.forEach(t=>{w.cats[t.cat]=(w.cats[t.cat]||0)+1});
     const P=L.perm||{},ps=(n.permission||{}).state;
-    w.perm.text=(n.permission||{}).label||P.last||'未到';w.perm.state={waiting:'wait',passed:'done',rejected:'error'}[ps]||'idle';
-    w.perm.cls=pt.classifier||0;w.perm.mode=pt.mode||0;w.perm.user=pt.user||0;w.perm.rej=(pt.user_reject||0)+(pt.rule_reject||0)+(pt.safety_reject||0);
+    /* 产品（D-121）：Codex 的会话按它的说法写；自动审核中是权限节点的「进行」 */
+    w.product=L.product==='codex'?'codex':'claude';
+    w.perm.text=(n.permission||{}).label||P.last||'未到';w.perm.state={waiting:'wait',passed:'done',rejected:'error',active:'active'}[ps]||'idle';
+    w.perm.cls=pt.classifier||0;w.perm.mode=pt.mode||0;w.perm.user=pt.user||0;w.perm.rej=(pt.user_reject||0)+(pt.rule_reject||0)+(pt.safety_reject||0)+(pt.review_reject||0);
     const H=L.hooks||{};w.hook.n=H.turn||0;w.hook.by=Object.assign({},H.by_event||{});w.hook.err=(n.hooks||{}).state==='error'?1:0;
     const M=L.memory||{},Sk=L.skills||{},Mc=L.mcp||{};
     /* 记忆卡：本轮读到或注入过记忆才算「完成」（05 号件 §三·一） */
@@ -2303,7 +2331,9 @@ if(LIVE){
     const C=L.compact||{};w.ctx.compacts=C.count||0;w.ctx.last=C.last&&C.last.pre!=null?{pre:C.last.pre,post:C.last.post}:null;
     w.tasks=(L.tasks||[]).map(t=>({s:t.subject||'',st:t.status}));
     w.checkpoints=(L.checkpoints||{}).edits||0;
-    const W8=L.wait||{};w.wait=['permission','input','other'].includes(W8.kind)?W8.kind:null;w.waitT=w.wait?rel(W8.since):null;w.waitText=W8.kind==='other'?(W8.text||''):'';w.host=L.host==='terminal'||L.host==='desktop'?L.host:null;
+    const W8=L.wait||{};w.wait=['permission','input','other'].includes(W8.kind)?W8.kind:null;
+    /* Codex：推测的等批准、自动审核（不是等你，不亮横幅）、上下文剩多少（D-121、D-125） */
+    w.waitGuess=!!W8.guess;w.review=W8.kind==='review';w.ctxLeft=L.context&&L.context.left_pct!=null?L.context.left_pct:null;w.waitT=w.wait?rel(W8.since):null;w.waitText=W8.kind==='other'?(W8.text||''):'';w.host=L.host==='terminal'||L.host==='desktop'?L.host:null;
     w.idle=se.proc_status==='idle'&&!active;
     /* 已退出：画面冻结在最后一刻，之后不再变成「已断开」；读不到进程状态：只冻中、下两块（D-98） */
     w.exited=se.proc_status==='exited';if(w.exited)w.conn='lost';
@@ -2320,11 +2350,12 @@ if(LIVE){
     /* 全部事件只列本轮（02 号件 §4.0，用户定）；没有时间戳的事件记下第一次见到的时刻，不再每次刷新都变（D-111） */
     w.log=(s.log||[]).filter(x=>{if(x.ts==null&&x._t==null)x._t=now();const tt=x.ts!=null?x.ts:x._t;return T.start_ts==null||tt>=T.start_ts-.001})
       .map(x=>({t:rel(x.ts!=null?x.ts:x._t),step:x.step,sum:x.summary||''}));
-    if(w.exited&&!w.log.some(x=>x.step==='已退出'))w.log.push({t:clock,step:'已退出',sum:'Claude Code 已退出'});
+    if(w.exited&&!w.log.some(x=>x.step==='已退出'||x.step==='已关闭'))w.log.push(w.product==='codex'?{t:clock,step:'已关闭',sum:'Codex 已关闭这个会话'}:{t:clock,step:'已退出',sum:'Claude Code 已退出'});
+    if(w.product==='codex')dgCodex();
     w.busy=(active||w.agents.some(a=>a.state==='run'))&&w.conn==='live';
     w.lastT=w.t=clock;
     LV.meta={title:se.title,cwd:home(se.cwd),version:se.version,mode:se.mode,model:L.model||{},proc:se.proc_status,avail:se.proc_available,
-      fmt:(se.new_types||[]).length||se.bad_lines?{types:(se.new_types||[]).length,bad:se.bad_lines||0}:null,errs:se.parse_errors||0,degraded:se.degraded||{},exited:se.proc_status==='exited',prev:L.prev_title};
+      product:w.product,fmt:(se.new_types||[]).length||se.bad_lines?{types:(se.new_types||[]).length,bad:se.bad_lines||0}:null,errs:se.parse_errors||0,degraded:se.degraded||{},exited:se.proc_status==='exited',prev:L.prev_title};
     LV.lastRecord=se.last_record_ts;
     return w;
   }
@@ -2431,7 +2462,7 @@ if(LIVE){
     _lvRenderUI(force);const m=LV.meta;
     /* 第一份快照到达前（或连不上）不显示原型写死的会话信息（D-111） */
     if(!m){setText($('#meta'),'等待连接');return}
-    const parts=[m.title,m.cwd,m.version?'Claude Code '+m.version:''].filter(Boolean);
+    const parts=[m.title,m.cwd,m.version?(m.product==='codex'?'Codex ':'Claude Code ')+m.version:''].filter(Boolean);
     let meta=parts.join(' · ');
     if(m.fmt)meta+=' · '+(m.fmt.types?'有 '+m.fmt.types+' 种没见过的记录':'')+(m.fmt.types&&m.fmt.bad?'、':'')+(m.fmt.bad?m.fmt.bad+' 条坏行':'')+'，已跳过';
     if(m.errs)meta+=' · '+m.errs+' 条记录处理出错';
@@ -2440,14 +2471,18 @@ if(LIVE){
     setText($('#meta'),meta||'等待第一条记录');
     setText(reads.mode.b,m.mode?(MODE_NAME[m.mode]||m.mode):'—');
     if(m.avail===false&&world.conn==='live')setText(reads.mode.s,'状态未知');
+    /* 「花在哪」间隙的说明按产品写 */
+    {const g=I18N.tr(m.product==='codex'?'间隙：步骤之间 Codex 自己准备、等压缩的时间':'间隙：步骤之间 Claude Code 自己准备、等压缩的时间');document.querySelectorAll('[data-k=g]').forEach(e=>{if(e.title&&e.title!==g)e.title=g})}
   };
   /* ---------- 抽屉「这一站」：用服务端的真实数字，中英文各自拼（D-111，原来是原型写死的合成值） ---------- */
-  const SRC_EN={'你输入':'typed by you','后台通知':'background notice','子 agent 交回':'agent hand-back','其他会话':'other session','协调者':'coordinator','自动继续':'auto-continue','你的命令':'your command'};
+  const SRC_EN={'你排队的输入':'queued by you','自动化':'automation','你的回答':'your answer','系统消息':'system message','新建对话':'new thread','未知':'unknown','你输入':'typed by you','后台通知':'background notice','子 agent 交回':'agent hand-back','其他会话':'other session','协调者':'coordinator','自动继续':'auto-continue','你的命令':'your command'};
   const CATS=[['Shell','Shell','Shell'],['文件','文件','File'],['网络','网络','Network'],['MCP','MCP','MCP'],['其他','其他','Other']];
   function liveRows(id,W,en){
     const s=LV.s,L=s&&s.live||{},D=L.drawer;if(!D)return null;
     const z=(a,b)=>en?b:a,k=n=>fmtK(n||0),tm=n=>en?(n===1?'1 time':(n||0)+' times'):(n||0)+' 次',none=z('未见','none');
     const ge=(n,zh)=>en?String(n||0):(n||0)+' '+zh;
+    const cx=L.product==='codex';
+    if(cx){const r=cxRows(id,W,en,D,L,z,k,tm,none,ge);if(r)return r}
     switch(id){
     case'input':{const I=D.input||{};return[[z('来源','Source'),I.source?(en?SRC_EN[I.source]||I.source:I.source):none],[z('内容','Content'),I.summary||none],
       [z('轮次','Turn'),en?'#'+(I.rounds||0):'第 '+(I.rounds||0)+' 轮'],[z('插话','Interjections'),ge(I.interjected,'条')],[z('后台通知','Background notices'),ge(I.notifications,'条')]]}
@@ -2495,6 +2530,63 @@ if(LIVE){
     }
     return null;
   }
+  /* Codex 会话的抽屉（20 号件 §五）：记忆是 AGENTS.md 和 Codex 记忆，权限按批准方式、沙箱、审核方式写，Hook 不记录，没有文件检查点 */
+  function cxRows(id,W,en,D,L,z,k,tm,none,ge){
+    switch(id){
+    case'memory':{const m=D.memory||{},mv=x=>x?k(x.size)+z(' 字符',' chars'):none;
+      return[['AGENTS.md',mv(m.agents_md)],[z('Codex 记忆','Codex memory'),mv(m.codex_memory)],
+        [z('读写','Reads / writes'),en?'read '+(m.reads||0)+' · write '+(m.writes||0):'读 '+(m.reads||0)+' · 写 '+(m.writes||0)]]}
+    case'hook':return[[z('说明','Note'),z('Codex 不在记录里写 Hook 的运行，看不到次数和出错','Codex does not record hook runs, so counts and errors are not visible')]];
+    case'perm':{const P=D.perm||{},t=P.turn||{},mn=P.mode?(MODE_NAME[P.mode]||P.mode):null,lt=W.perm.text;
+      const rv={user:z('你','you'),auto_review:z('自动审核','auto-review')}[P.reviewer]||P.reviewer||none;
+      return[[z('批准方式','Approval'),mn?(en?P.mode:mn):none],[z('沙箱','Sandbox'),P.sandbox||none],[z('谁来批准','Approved by'),rv],[z('最近一次','Last'),en?(trOne(lt)||lt):lt],
+        [z('你批准了','Approved by you'),tm(t.user)],[z('自动审核放行','Auto-review allowed'),tm(t.review)],[z('沙箱内运行','Ran in sandbox'),tm(t.sandbox)],[z('模式放行','Allowed by mode'),tm(t.mode)],
+        [z('拒绝','Denied'),tm((t.user_reject||0)+(t.review_reject||0))],[z('说明','Note'),z('次数是本轮的；等你批准记录里没有，只能从「申请出沙箱」推测','Counts are for this turn; approvals are not recorded, only inferred from a request to run outside the sandbox')]]}
+    case'model':{const m=D.model||{},tot=(m.input||0)+(m.cache_write||0)+(m.cache_read||0);
+      return[[z('模型','Model'),m.id||none],[z('配置','Config'),m.effort?'effort '+m.effort:none],[z('次数','Calls'),en?'#'+(m.calls_turn||0)+' this turn · '+(m.calls_total||0)+' total':'本轮第 '+(m.calls_turn||0)+' 次 · 共 '+(m.calls_total||0)+' 次'],
+        [z('思考','Thinking'),en?pl(W.model.thinkN||0,'segment')+' (encrypted)':(W.model.thinkN||0)+' 段（内容加密）'],
+        [z('缓存','Cache'),tot?(en?'read '+k(m.cache_read)+' · '+Math.round((m.cache_read||0)*100/tot)+'% hit':'读 '+k(m.cache_read)+' · 命中 '+Math.round((m.cache_read||0)*100/tot)+'%'):none],
+        ['Token',m.has_usage?(en?'in '+k(m.input)+' · out '+k(m.output):'输入 '+k(m.input)+' · 输出 '+k(m.output)):none]]}
+    case'tools':{const T=D.tools||{},ct=T.cats_turn||{},cur=W.tools.filter(t=>t.state==='run').pop();
+      return[[z('当前','Current'),cur?cur.name+' '+cur.target:z('无','none')],[z('在途','In flight'),ge(W.inflight,'个')],
+        [z('本轮调用','Calls this turn'),CATS.map(([key,zh,e])=>(en?e:zh)+' '+(ct[key]||0)).join(' · ')],[z('本轮出错','Errors this turn'),tm(T.errors_turn)]]}
+    case'agents':{const A=D.agents||{},st=a=>a.failed?z('失败','failed'):a.state==='run'?z('运行中','running'):z('已结束','ended');
+      const r=W.agents.length?W.agents.flatMap(a=>[[a.type,a.desc],[z('状态','Status'),st(a)],[z('当前','Current'),en?(trOne(a.step)||a.step):a.step]]):[[z('子 agent','Subagents'),z('无','none')]];
+      return r.concat([[z('被中断后跑完的命令','Commands finished after an interrupt'),tm(A.background_done)]])}
+    case'end':{const sec=W.turn.sec,ls=W.ctx.last;
+      return[[z('回合','Turn'),W.turn.active?z('进行中','running'):W.turn.intr?z('中断','interrupted'):sec!=null?(sec>=3600?fmtT(sec):en?sec+'s':sec+' 秒'):z('未到','pending')],
+        [z('上下文占用','Context used'),fmtK(W.ctx.tokens)+(W.ctxLeft!=null?(en?' · '+W.ctxLeft+'% left':' · 剩 '+W.ctxLeft+'%'):'')],[z('压缩','Compactions'),tm(W.ctx.compacts)],[z('最近压缩','Last compaction'),ls&&ls.pre!=null?fmtK(ls.pre)+(ls.post?' → '+fmtK(ls.post):''):z('无','none')]]}
+    }
+    return null;
+  }
+  /* Codex 会话：「看不到的部分」换成 Codex 的 7 件（19 号件 §六），第 8 件不变；动词表加上 Codex 的工具名 */
+  function dgCodex(){
+    if(dgCodex.done)return;dgCodex.done=true;
+    const last=BLIND_DG[BLIND_DG.length-1],lastEn=BLIND_EN[BLIND_EN.length-1];
+    BLIND_DG.splice(0,BLIND_DG.length,'思考的内容：加密了，只知道想了几段，不知道想了多久。','模型调用的开始：只记结束；「模型在想」是按「该轮到模型了」推出来的。',
+      '等你批准：不写记录；只能从「这一步申请了出沙箱」推测。','脚本里正在跑哪一步：工具都包在一段脚本里，跑的时候只能从脚本文字认，结束后才有准确的命令和耗时。',
+      'Hook 的运行：记录里没有，Hook 一站显示「Codex 不记录」。','别的原因弹出的批准：「每条都问」的模式、改工作目录外的文件也会问，记录里没有线索，只显示执行中。',
+      '自动压缩的开始：只有完成时才有记录。',last);
+    BLIND_EN.splice(0,BLIND_EN.length,'What it is thinking: encrypted; only the number of reasoning blocks is known, not how long.',
+      "When a model call starts: only the end is recorded; “Model thinking” is inferred from whose turn it is.",
+      'Waiting for your approval: not recorded; inferred only from “this step asked to run outside the sandbox”.',
+      'Which step inside a script is running: tools run inside one script; while it runs we read the script text, exact commands and timings come when it ends.',
+      'Hooks running: not in the records; the Hook station shows “Not recorded by Codex”.',
+      'Approvals asked for other reasons: “ask every time” mode and edits outside the workspace also ask; nothing in the records, shown as running.',
+      'When auto-compaction starts: only its completion is recorded.',lastEn);
+    Object.assign(VERB,{'命令':['正在运行','运行了'],'改文件':['正在改','改了'],'派子 agent':['正在派出子 agent','派出了子 agent'],'看图片':['正在看','看了']});
+    Object.assign(VERB_EN,{'命令':['Running','ran'],'改文件':['Editing','edited'],'派子 agent':['Dispatching subagent','dispatched subagent'],'看图片':['Viewing','viewed']});
+  }
+  /* 标题和说明：Codex 的已关闭、自动审核中、推测的等你批准；其余的句子里 Claude Code 换成 Codex */
+  {const _rs=rsLine;rsLine=function(W){
+    if(W.product==='codex'){const en=I18N.lang==='en'&&form.id==='latticefui';
+      if(W.exited)return{l:'Codex 已关闭这个会话',s:'会话结束了，画面停在最后一刻。看板随后关闭，下次用 $harness-board 再打开。',c:'bad'};
+      if(W.conn!=='lost'&&!W.wait&&W.review)return{l:en?'Auto-review in progress':'自动审核中',s:'这一步申请了出沙箱，Codex 的自动审核在判断，一般十几秒。',c:'act'};
+      if(W.conn!=='lost'&&W.wait==='permission'&&W.waitGuess)return{l:en?'May be waiting for your approval':'可能在等你批准',s:dgWaitSay(W,0),c:'wait'};}
+    return _rs(W)};
+   const cxName=(W,r)=>{if(r&&W&&W.product==='codex'){r=Object.assign({},r);r.l=String(r.l).replace(/Claude Code/g,'Codex');r.s=String(r.s).replace(/Claude Code/g,'Codex')}return r};
+   const _nl=nowLine;nowLine=function(W,c){return cxName(W,_nl(W,c))};
+   const _ne=nowLineEn;nowLineEn=function(W,c){return cxName(W,_ne(W,c))};}
   {const _rz=rowsFor,_re=rowsForEn;rowsFor=(id,W)=>liveRows(id,W,false)||_rz(id,W);rowsForEn=(id,W)=>liveRows(id,W,true)||_re(id,W)}
   /* 卡片副行：不是你输入开的回合写来源（用户定，Figma 第一页第十九行 I1、I2）；回合卡超过 1 小时写 1h02m */
   {const _st=World.prototype.station;World.prototype.station=function(id){const r=_st.call(this,id);
@@ -2514,6 +2606,8 @@ if(LIVE){
   [['等待连接','Connecting'],['等待第一条记录','Waiting for the first record'],['(未知)','(unknown)'],['你的命令','Your command'],['重新请求','retried request'],
    ['没有新的输入，Claude Code 接着跑','No new input; Claude Code carried on'],['调用模型','Calling model'],['被你停止','stopped by you']].forEach(([zh,e])=>{if(!EX.has(zh))EX.set(zh,e)});
   SUB.push([/、/g,()=>', ']);
+  /* Codex 的工具卡名字（D-125）开头的事件摘要：「命令 npm test」→「Command npm test」 */
+  SUB.push([/^(命令|改文件|派子 agent|看图片)(?= )/,m=>EX.get(m)||m]);
   /* 直接开文件时没有令牌，不会走到这里；有令牌就连服务端 */
   $('#chrome').style.display='none';
   connect();

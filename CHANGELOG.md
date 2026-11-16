@@ -2,6 +2,12 @@
 
 [中文在下方](#更新记录)
 
+## 0.4.0 — 2026-11-16
+
+- **Codex (#4).** harness-board now works in Codex on macOS: the Codex CLI in a terminal and Codex in the ChatGPT desktop app. Type `$harness-board` in a Codex session; the same package works for Claude Code and Codex. Install it in `~/.agents/skills/` for Codex (see the README for using both). The first run is blocked by Codex's sandbox, and the model asks to run it once more outside the sandbox; approve it, or let auto-review decide.
+- **What differs in Codex.** The context reading shows how much is left. Codex writes nothing while it waits for approval, so the page says "May be waiting for your approval" when a step has asked to run outside the sandbox and hasn't started. Auto-review shows up as "Auto-reviewing" and then its verdict. Hooks aren't in Codex's records, so the Hook station says so. The board stops when Codex closes the session and follows `/new` in the terminal.
+- **Readings.** Every readings cell now has the same 12-pixel padding on both sides at every window size, and its status text is right-aligned.
+
 ## 0.3.0 — 2026-11-15
 
 - **Claude desktop app (#3).** harness-board now works for Claude Code in the Claude desktop app (its Code feature) on macOS. Sessions there never write the record that marks the end of a turn, so the board used to stay on "Model thinking" and then count seconds without new records. A turn now ends when the Stop hooks have run, when Claude Code goes idle, or when the next turn starts. Headless sessions (`claude -p` and other SDK hosts) are fixed the same way.
@@ -27,6 +33,12 @@ First release. Type `/harness-board` in a Claude Code session and a local page o
 ---
 
 ## 更新记录
+
+### 0.4.0（2026-11-16）
+
+- **Codex（#4）：** 支持 macOS 上的 Codex：终端里的 Codex CLI，以及 ChatGPT 桌面应用里的 Codex。在 Codex 会话里输入 `$harness-board`；同一个包 Claude Code 和 Codex 都能用。给 Codex 用要装在 `~/.agents/skills/`（两边都用的装法见说明）。第一次运行会被 Codex 的沙箱挡住，模型会申请在沙箱外再运行一次：你批准，或交给自动审核。
+- **Codex 里不一样的地方：** 上下文那格显示还剩多少。Codex 等批准时不写记录，所以某一步申请了出沙箱、还没开始执行时，页面写「可能在等你批准」。自动审核显示为「自动审核中」，然后是结论。Codex 的记录里没有 Hook，Hook 一站会写明。Codex 关闭这个会话后看板自己停止；终端里用 `/new` 换会话，看板会跟过去。
+- **读数：** 读数区每一格在所有窗口宽度下左右留白都是 12 像素，状态字贴右。
 
 ### 0.3.0（2026-11-15）
 

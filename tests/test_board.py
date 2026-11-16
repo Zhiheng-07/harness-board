@@ -680,7 +680,10 @@ class 命令行(unittest.TestCase):
     def setUp(self):
         self.s = Sandbox()
         # 0.2.0 起终端提示分中英文，这组测试按中文断言，固定成中文
-        self.env = dict(os.environ, CLAUDE_CONFIG_DIR=self.s.config, XDG_CACHE_HOME=self.s.state, HARNESS_BOARD_LANG='zh')
+        self.env = dict(os.environ, CLAUDE_CONFIG_DIR=self.s.config, XDG_CACHE_HOME=self.s.state, HARNESS_BOARD_LANG='zh',
+                        CODEX_HOME=os.path.join(self.s.tmp, 'codex'))
+        for k in ('CODEX_THREAD_ID', 'CODEX_SESSION_ID', 'CODEX_SANDBOX'):
+            self.env.pop(k, None)
         self.env.pop('CLAUDE_CODE_SESSION_ID', None)
         self.pids = []
 
@@ -872,6 +875,33 @@ class 命令行(unittest.TestCase):
         self.assertEqual(get(st['port'], f"/health?t={st['token']}")[0], 200)
 
 
+class Codex换会话(unittest.TestCase):
+    """终端里 /new 后，同一个 Codex 进程开着的新主记录就是当前会话；子会话不算。"""
+
+    def test_扫过的新主会话也能换过去(self):
+        tmp = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, tmp, True)
+        d = os.path.join(tmp, 'sessions', '2026', '11', '16')
+        os.makedirs(d)
+
+        def roll(sid, t, **meta):
+            p = os.path.join(d, 'rollout-2026-11-16T00-00-00-%s.jsonl' % sid)
+            with open(p, 'w') as f:
+                f.write(json.dumps({'type': 'session_meta', 'payload': dict({'id': sid, 'source': 'cli'}, **meta)}) + '\n')
+            os.utime(p, (t, t))
+            return p
+        now = time.time()
+        old = roll('old', now - 60)
+        new = roll('new', now)
+        child = roll('g1', now + 5, source={'subagent': {'other': 'guardian'}}, parent_thread_id='old')
+        svc = board.CodexService(tmp, 'old')
+        svc._reader = board.LineReader(old)
+        svc._seen.update({new, child})    # 扫子会话时两个都看过
+        svc._children[child] = ('g1', 'guardian', board.LineReader(child))
+        self.assertEqual(svc._new_main([old, new, child]), 'new')
+        self.assertIsNone(svc._new_main([old, child]))
+
+
 class 平台和语言(unittest.TestCase):
     """0.2.0：Windows 直接退出；终端提示按系统语言出中文或英文；页面标题和默认语言。"""
 
@@ -940,7 +970,9 @@ class 平台和语言(unittest.TestCase):
     def test_命令行英文提示(self):
         s = Sandbox()
         try:
-            env = dict(os.environ, CLAUDE_CONFIG_DIR=s.config, XDG_CACHE_HOME=s.state, HARNESS_BOARD_LANG='en')
+            env = dict(os.environ, CLAUDE_CONFIG_DIR=s.config, XDG_CACHE_HOME=s.state, HARNESS_BOARD_LANG='en', CODEX_HOME=os.path.join(s.tmp, 'codex'))
+            for k in ('CODEX_THREAD_ID', 'CODEX_SESSION_ID', 'CODEX_SANDBOX'):
+                env.pop(k, None)
             env.pop('CLAUDE_CODE_SESSION_ID', None)
             r = subprocess.run([sys.executable, BOARD, '--session', 's1', 'status'], capture_output=True, text=True, timeout=20, env=env)
             self.assertEqual(r.stdout.strip(), 'No board is running for this session.')

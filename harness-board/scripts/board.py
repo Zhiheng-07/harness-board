@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """harness-board 的命令行入口和本地服务。
 
-只读取 Claude Code 的会话记录和进程登记文件，不写回，不改配置。
+只读取 Claude Code、Codex 的会话记录和进程信息，不写回，不改配置。
 服务只监听 127.0.0.1，随机端口加随机 token，没有写接口。只用 Python 标准库，语法兼容 Python 3.9。
 """
 import argparse
@@ -26,7 +26,9 @@ from urllib.parse import parse_qs, urlparse
 sys.dont_write_bytecode = True
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
-from cc_records import Board, LineReader, doctor  # noqa: E402
+from cc_records import Board, LineReader, _ts, doctor  # noqa: E402
+from cx_records import (CodexBoard, codex_doctor, codex_home, find_rollout, first_record, host_of,  # noqa: E402
+                        lock_holders, open_rollouts, running_sessions)
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 ASSET = os.path.join(os.path.dirname(HERE), 'assets', 'board.html')
@@ -51,14 +53,18 @@ MSG = {
     'none_running': ('这个会话没有在运行的看板。', 'No board is running for this session.'),
     'stopped': ('看板已停止。', 'Board stopped.'),
     'running': ('看板运行中：{url}', 'Board running: {url}'),
-    'no_sessions': ('没有运行中的 Claude Code 会话。', 'No Claude Code session is running.'),
+    'no_sessions': ('没有运行中的 Claude Code 或 Codex 会话。', 'No Claude Code or Codex session is running.'),
     'bad_index': ('序号 {index} 不存在。', 'There is no session number {index}.'),
     'untitled': ('(未命名)', '(untitled)'),
     'pick_prompt': ('选一个序号：', 'Pick a number: '),
     'pick_hint': ('运行 board.py pick <序号> 选择一个会话。', 'Run board.py pick <number> to choose a session.'),
-    'no_session_id': ('拿不到当前会话的 id。请在 Claude Code 会话里运行 /harness-board，或用 board.py pick 选择会话。',
-                      "Can't find the current session id. Run /harness-board inside a Claude Code session, "
+    'no_session_id': ('拿不到当前会话的 id。请在 Claude Code 里运行 /harness-board、在 Codex 里运行 $harness-board，或用 board.py pick 选择会话。',
+                      "Can't find the current session id. Run /harness-board in Claude Code or $harness-board in Codex, "
                       'or choose a session with board.py pick.'),
+    # Codex 的沙箱不让开本地端口、写缓存（19 号件 §五）：这句话主要是给 Codex 里的模型看的，它会申请在沙箱外重跑
+    'codex_sandbox': ('Codex 的沙箱不让看板开本地端口、写缓存目录。请在沙箱外重跑同一条命令（申请提权，sandbox_permissions: require_escalated）。',
+                      "Codex's sandbox blocks the board from listening on a local port and writing its cache. "
+                      'Rerun the same command outside the sandbox (request escalated permissions: sandbox_permissions require_escalated).'),
     'unsupported': ('harness-board 只支持 macOS 和 Linux，不支持这个系统（{name}）。',
                     'harness-board supports macOS and Linux only, not this system ({name}).'),
     'no_permission': ('没有权限访问 {path}。如果开着 Claude Code 的沙箱，它会挡住看板：'
@@ -70,7 +76,7 @@ MSG = {
     'desc': ('harness-board：实时显示 Claude Code 会话走到哪一步',
              'harness-board: a live view of where the current Claude Code session is'),
     'help_index': ('pick 的序号', 'session number for pick'),
-    'help_session': ('会话 id，默认读环境变量 CLAUDE_CODE_SESSION_ID', 'session id; defaults to $CLAUDE_CODE_SESSION_ID'),
+    'help_session': ('会话 id，默认读环境变量 CODEX_THREAD_ID，再读 CLAUDE_CODE_SESSION_ID', 'session id; defaults to $CODEX_THREAD_ID, then $CLAUDE_CODE_SESSION_ID'),
     'help_no_open': ('只输出地址，不打开浏览器', 'print the address instead of opening the browser'),
 }
 
@@ -114,7 +120,7 @@ def platform_ok():
 
 def _build():
     """代码版本标记。代码更新后，start 会重启旧服务而不是复用。"""
-    names = (os.path.abspath(__file__), os.path.join(HERE, 'cc_records.py'))
+    names = (os.path.abspath(__file__), os.path.join(HERE, 'cc_records.py'), os.path.join(HERE, 'cx_records.py'))
     return str(max(os.stat(n).st_mtime_ns for n in names))
 
 
@@ -564,6 +570,274 @@ class Service:
         return Handler
 
 
+SHELLS = frozenset(('zsh', 'bash', 'sh', 'fish', 'dash', 'ksh', 'tcsh', 'csh'))
+
+
+def _command_child(pid, command):
+    """Codex 进程下有没有正在跑这条命令的 shell。等你批准时没有，批准后命令跑起来才有（19 号件 §三）。
+    要对上命令原文：Codex 还会起一闪而过的 shell 做环境快照，只看「有没有子 shell」会把它当成命令开跑（实测）。"""
+    if not command:
+        return False
+    want = ' '.join(command.split())[:80]
+    try:
+        out = subprocess.run(['ps', '-A', '-ww', '-o', 'ppid=,args='], capture_output=True, text=True, timeout=3).stdout
+    except (OSError, subprocess.SubprocessError):
+        return False
+    for ln in out.splitlines():
+        parts = ln.split(None, 1)
+        if len(parts) == 2 and parts[0] == str(pid):
+            args = parts[1]
+            exe = os.path.basename(args.split(None, 1)[0]).lstrip('-')
+            if exe in SHELLS and want in ' '.join(args.split()):
+                return True
+    return False
+
+
+def _codex_parent():
+    """沿本进程的父进程往上找 Codex（找不到锁文件的占用者时用）。"""
+    pid = os.getppid()
+    for _ in range(6):
+        try:
+            out = subprocess.run(['ps', '-o', 'ppid=,comm=', '-p', str(pid)], capture_output=True, text=True, timeout=3).stdout.strip()
+        except (OSError, subprocess.SubprocessError):
+            return None
+        if not out:
+            return None
+        ppid, comm = (out.split(None, 1) + [''])[:2]
+        if os.path.basename(comm.strip()) == 'codex':
+            return pid
+        if not ppid.isdigit() or int(ppid) <= 1:
+            return None
+        pid = int(ppid)
+    return None
+
+
+class CodexService(Service):
+    """跟读一个 Codex 会话（20 号件）：主记录、它的子 agent 和自动审核会话、进程和锁文件。"""
+
+    def __init__(self, home, session_id, codex_pid=None, state_path=None, idle_limit=IDLE_LIMIT, exit_delay=2.0):
+        super().__init__(home, session_id, claude_pid=codex_pid, state_path=state_path, idle_limit=idle_limit, exit_delay=exit_delay)
+        self.home = home
+        self.board = CodexBoard(session_id)
+        self._children = {}
+        self._seen = set()
+        self._next_child = 0.0
+        self._next_lock = 0.0
+        self._next_switch = 0.0
+        self._next_title = 0.0
+        self._next_child_proc = 0.0
+        self._title_mtime = None
+
+    def snapshot(self, include_log=True):
+        s = super().snapshot(include_log=include_log)
+        s['session']['product'] = 'codex'
+        s['session']['cwd'] = getattr(self.board, 'cwd', None)
+        return s
+
+    # ---------- 读取 ----------
+
+    def _collect_session(self, sid):
+        self._children, self._seen = {}, set()
+        path = find_rollout(self.home, sid)
+        if not path:
+            return None, [], {}
+        reader = LineReader(path)
+        return reader, reader.read(), {}
+
+    def _child_of(self, path):
+        """一个 rollout 是不是本会话的子会话：返回 (会话 id, 'guardian' 或 'agent')，不是返回 None；还读不到第一行返回 False。"""
+        m = first_record(path)
+        if not m:
+            return False
+        src = m.get('source')
+        spawn = src.get('subagent', {}).get('thread_spawn', {}) if isinstance(src, dict) and isinstance(src.get('subagent'), dict) else {}
+        parent = m.get('parent_thread_id') or (spawn.get('parent_thread_id') if isinstance(spawn, dict) else None)
+        if parent != self.session_id or not m.get('id'):
+            return None
+        guardian = m.get('thread_source') == 'guardian_review' or 'guardian' in json.dumps(src)
+        return m['id'], 'guardian' if guardian else 'agent'
+
+    def _scan_children(self, initial=False):
+        """找新出现的子会话，读出已有记录：[(会话 id, 种类, 记录)]。"""
+        if initial and self._reader:
+            since = os.path.getmtime(self._reader.path) - 7 * 86400
+            paths = [p for p in glob.glob(os.path.join(glob.escape(self.home), 'sessions', '*', '*', '*', 'rollout-*.jsonl'))
+                     if self._mtime_s(p) and self._mtime_s(p) >= since]
+        else:
+            days = {time.strftime('%Y/%m/%d', time.localtime(time.time() - d * 86400)) for d in (0, 1)}
+            paths = [p for d in days for p in glob.glob(os.path.join(glob.escape(self.home), 'sessions', d, 'rollout-*.jsonl'))]
+        out = []
+        for p in paths:
+            if p in self._seen or (self._reader and p == self._reader.path):
+                continue
+            hit = self._child_of(p)
+            if hit is False:
+                continue
+            self._seen.add(p)
+            if hit:
+                reader = LineReader(p)
+                self._children[p] = (hit[0], hit[1], reader)
+                out.append((hit[0], hit[1], reader.read()))
+        return out
+
+    def _replay_merged(self, rows, kids, log=True):
+        """主记录和子会话的记录按时间合并后回放：自动审核要落在它审的那一步上。"""
+        b = self.board
+        was = b._replaying, b._log_on
+        b._replaying, b._log_on = True, log
+        try:
+            pending = sorted(((_ts(r) or 0.0, n, cid, kind, r) for cid, kind, rs in kids for n, r in enumerate(rs) if isinstance(r, dict)),
+                             key=lambda x: (x[0], x[1]))
+            i = 0
+            for r in rows:
+                t = _ts(r) if isinstance(r, dict) else None
+                while i < len(pending) and t is not None and pending[i][0] <= t:
+                    b.feed_child(pending[i][2], [pending[i][4]], pending[i][3])
+                    i += 1
+                b.feed_line(r)
+            for x in pending[i:]:
+                b.feed_child(x[2], [x[4]], x[3])
+        finally:
+            b._replaying, b._log_on = was
+
+    def _load_initial(self):
+        with self._lock:
+            self._reader, rows, _ = self._collect_session(self.session_id)
+            self._replay_merged(rows, self._scan_children(initial=True))
+            self._load_title()
+            self.board.drain()
+
+    def _rebuild(self):
+        b = self.board
+        b._reset_session()
+        self._reader, rows, _ = self._collect_session(self.session_id)
+        self._replay_merged(rows, self._scan_children(initial=True), log=False)
+        self._load_title(force=True)
+        self._last_activity = time.time()
+
+    def _switch(self, sid):
+        b = self.board
+        self.session_id = b.session_id = sid
+        b.prev_title = b.custom_title or b.ai_title
+        b._reset_session()
+        b._log.clear()
+        b._pending_log = []
+        self._reader, rows, _ = self._collect_session(sid)
+        self._replay_merged(rows, self._scan_children(initial=True), log=False)
+        b._add_log('会话已切换', sid[:8], time.time())
+        self._load_title(force=True)
+        self._last_activity = time.time()
+        self._write_state()
+
+    def _find_main(self):
+        if self._reader:
+            return
+        path = find_rollout(self.home, self.session_id)
+        if path:
+            self._reader = LineReader(path)
+            self._last_activity = time.time()
+
+    def _poll_agents(self):
+        now = time.time()
+        if now >= self._next_child:
+            self._next_child = now + 1.0
+            for cid, kind, rows in self._scan_children():
+                if rows:
+                    self._last_activity = now
+                    self.board.feed_child(cid, rows, kind)
+        for cid, kind, reader in list(self._children.values()):
+            rows = reader.read()
+            if rows:
+                self._last_activity = now
+                self.board.feed_child(cid, rows, kind)
+
+    def _new_main(self, paths):
+        """同一进程开着的记录里，比当前会话更晚在写的主会话（不是子会话）：返回它的 id，没有返回 None。"""
+        cur = self._mtime_s(self._reader.path) or 0
+        best = None
+        for p in paths:
+            # 只跳过子会话：_seen 里也有扫子会话时看过的普通主会话，新会话的记录就在里面（实测）
+            if p == self._reader.path or p in self._children:
+                continue
+            m = first_record(p)
+            if not m or isinstance(m.get('source'), dict) or not m.get('id'):
+                continue
+            t = self._mtime_s(p) or 0
+            if t > cur + 1 and (best is None or t > best[0]):
+                best = (t, m['id'])
+        return best[1] if best else None
+
+    def _load_title(self, force=False):
+        """会话标题：Codex 写在 session_index.jsonl（id、thread_name），只在文件变了时重读。"""
+        path = os.path.join(self.home, 'session_index.jsonl')
+        m = self._mtime(path)
+        if m is None or (m == self._title_mtime and not force):
+            return
+        self._title_mtime = m
+        name = None
+        try:
+            with open(path, encoding='utf-8', errors='replace') as f:
+                for ln in f:
+                    if self.session_id in ln:
+                        try:
+                            o = json.loads(ln)
+                        except ValueError:
+                            continue
+                        if o.get('id') == self.session_id and isinstance(o.get('thread_name'), str):
+                            name = o['thread_name']
+        except OSError:
+            return
+        if name:
+            self.board.custom_title = name
+
+    # ---------- 进程 ----------
+
+    def _poll_proc(self):
+        if self._exited:
+            return
+        now = time.time()
+        b = self.board
+        if self.claude_pid is None:
+            if now >= self._next_lock:
+                self._next_lock = now + 2.0
+                held = lock_holders(self.home, self.session_id)
+                if held:
+                    self.claude_pid = min(held)
+                    self._write_state()
+            if self.claude_pid is None:
+                b.proc_available = False
+                return
+        b.proc_available = True
+        alive = _pid_alive(self.claude_pid)
+        if alive and now >= self._next_lock:
+            self._next_lock = now + 2.0
+            held = lock_holders(self.home, self.session_id)
+            if held is not None and self.claude_pid not in held:
+                if held:
+                    self.claude_pid = min(held)
+                    self._write_state()
+                elif self._reader:
+                    alive = False   # 锁没人占了：会话已关闭（锁文件本身不删，19 号件 §四）
+        if not alive:
+            self._exited = True
+            b.proc_exited()
+            self._exit_at = now + self.exit_delay
+            return
+        if b.guess_waiting() and now >= self._next_child_proc:
+            self._next_child_proc = now + 0.5
+            if _command_child(self.claude_pid, b.guess_command()):
+                b.command_running(now)
+        if now >= self._next_switch and host_of(b.originator) == 'terminal' and self._reader:
+            # 终端里 /new、/resume 换会话：同一个进程开着的主会话记录里，最近在写的那个就是当前会话
+            self._next_switch = now + 2.0
+            sid = self._new_main(open_rollouts(self.claude_pid))
+            if sid:
+                self._switch(sid)
+        if now >= self._next_title:
+            self._next_title = now + 5.0
+            self._load_title()
+
+
 # ---------- 命令行 ----------
 
 def _key(session_id, claude_pid):
@@ -622,8 +896,13 @@ def _terminate(pid):
         time.sleep(0.02)
 
 
-def cmd_start(session_id, claude_pid, no_open):
-    path, st = _find_state(session_id, claude_pid)
+def cmd_start(session_id, claude_pid, no_open, product='claude'):
+    if product == 'codex':
+        # 桌面端所有对话共用一个 app-server 进程：Codex 的状态文件按会话 id 分，不按进程
+        claude_pid_key = None
+    else:
+        claude_pid_key = claude_pid
+    path, st = _find_state(session_id, claude_pid_key)
     if st and _health(st):
         if st.get('build') == _build():
             _announce(st['url'], 'reused', no_open)
@@ -634,8 +913,8 @@ def cmd_start(session_id, claude_pid, no_open):
             os.remove(path)
         except OSError:
             pass
-    path = os.path.join(state_dir(), _key(session_id, claude_pid) + '.json')
-    args = [sys.executable, os.path.abspath(__file__), '--serve', '--session', session_id, '--state', path]
+    path = os.path.join(state_dir(), _key(session_id, claude_pid_key) + '.json')
+    args = [sys.executable, os.path.abspath(__file__), '--serve', '--session', session_id, '--state', path, '--product', product]
     if claude_pid:
         args += ['--claude-pid', str(claude_pid)]
     with open(path + '.err', 'w') as err:
@@ -676,7 +955,7 @@ def cmd_status(session_id, claude_pid):
 
 
 def cmd_pick(config, no_open, index):
-    sessions = list_sessions(config)
+    sessions = list_sessions(config) + running_sessions(codex_home())
     if not sessions:
         print(T('no_sessions'))
         return 1
@@ -702,18 +981,25 @@ def cmd_pick(config, no_open, index):
         if not chosen:
             print(T('pick_hint'))
             return 1
-    return cmd_start(chosen['sessionId'], chosen['pid'], no_open)
+    return cmd_start(chosen['sessionId'], chosen['pid'], no_open, chosen.get('product') or 'claude')
 
 
 def cmd_doctor(config):
     r = doctor(os.path.join(config, 'projects'))
+    home = codex_home()
+    if os.path.isdir(os.path.join(home, 'sessions')):
+        r['codex'] = codex_doctor(home)
     print(json.dumps(r, ensure_ascii=False, indent=1))
-    broken = r['crashes'] or r['non_human_prompts'] or r['inflight_underflow'] or r['stuck_after_turn']
+    broken = any(x['crashes'] or x['non_human_prompts'] or x['inflight_underflow'] or x['stuck_after_turn']
+                 for x in (r, r.get('codex') or r))
     return 1 if broken else 0
 
 
-def cmd_serve(config, session_id, claude_pid, state_path):
-    svc = Service(config, session_id, claude_pid=claude_pid, state_path=state_path)
+def cmd_serve(config, session_id, claude_pid, state_path, product='claude'):
+    if product == 'codex':
+        svc = CodexService(codex_home(), session_id, codex_pid=claude_pid, state_path=state_path)
+    else:
+        svc = Service(config, session_id, claude_pid=claude_pid, state_path=state_path)
     signal.signal(signal.SIGTERM, lambda *_: threading.Thread(target=svc.stop, daemon=True).start())
     signal.signal(signal.SIGINT, lambda *_: threading.Thread(target=svc.stop, daemon=True).start())
     svc.start()
@@ -738,17 +1024,44 @@ def main(argv=None):
     p.add_argument('--serve', action='store_true', help=argparse.SUPPRESS)
     p.add_argument('--state', help=argparse.SUPPRESS)
     p.add_argument('--claude-pid', type=int, help=argparse.SUPPRESS)
+    p.add_argument('--product', choices=['claude', 'codex'], default='claude', help=argparse.SUPPRESS)
     a = p.parse_args(argv)
     config = config_dir()
     if a.serve:
-        return cmd_serve(config, a.session, a.claude_pid, a.state)
+        return cmd_serve(config, a.session, a.claude_pid, a.state, a.product)
+    if os.environ.get('CODEX_SANDBOX') and a.command in ('start', 'pick'):
+        # 在 Codex 的沙箱里：开不了端口、写不了缓存，起服务注定失败（19 号件 §五）
+        print(T('codex_sandbox'), file=sys.stderr)
+        return 3
     try:
         return _run(a, config)
     except PermissionError as e:
         # Claude Code 的沙箱对 skill 里的 ! 命令也生效，只许写工作目录，写 ~/.cache/harness-board 会被挡（0.2.0 实测）。
-        # 不甩出整段报错，说清原因和绕开的办法
-        print(T('no_permission', path=e.filename or '', board=os.path.abspath(__file__)), file=sys.stderr)
+        # 不甩出整段报错，说清原因和绕开的办法；在 Codex 里（有 CODEX_THREAD_ID）说 Codex 沙箱的办法
+        if os.environ.get('CODEX_THREAD_ID'):
+            print(T('codex_sandbox'), file=sys.stderr)
+        else:
+            print(T('no_permission', path=e.filename or '', board=os.path.abspath(__file__)), file=sys.stderr)
         return 3
+
+
+def resolve_session(arg, config, env=None):
+    """当前会话：(会话 id, 'claude' 或 'codex')（20 号件 §2.1）。
+    --session 不为空就用它，按记录在哪边定产品；否则先看 CODEX_THREAD_ID（从 Claude Code 里起的 Codex 会继承 Claude 的变量），
+    再看 CLAUDE_CODE_SESSION_ID。Claude Code 的 SKILL.md 写的是 --session=${CLAUDE_SESSION_ID}，在 Codex 里它是空的。"""
+    env = os.environ if env is None else env
+    sid = (arg or '').strip()
+    if sid:
+        if find_transcript(config, sid):
+            return sid, 'claude'
+        if find_rollout(codex_home(), sid):
+            return sid, 'codex'
+        return sid, 'codex' if env.get('CODEX_THREAD_ID') == sid else 'claude'
+    if env.get('CODEX_THREAD_ID'):
+        return env['CODEX_THREAD_ID'], 'codex'
+    if env.get('CLAUDE_CODE_SESSION_ID'):
+        return env['CLAUDE_CODE_SESSION_ID'], 'claude'
+    return None, None
 
 
 def _run(a, config):
@@ -756,10 +1069,18 @@ def _run(a, config):
         return cmd_doctor(config)
     if a.command == 'pick':
         return cmd_pick(config, a.no_open, a.index)
-    sid = a.session or os.environ.get('CLAUDE_CODE_SESSION_ID')
+    sid, product = resolve_session(a.session, config)
     if not sid:
         print(T('no_session_id'), file=sys.stderr)
         return 2
+    if product == 'codex':
+        held = lock_holders(codex_home(), sid)
+        pid = min(held) if held else _codex_parent()
+        if a.command == 'stop':
+            return cmd_stop(sid, None)
+        if a.command == 'status':
+            return cmd_status(sid, None)
+        return cmd_start(sid, pid, a.no_open, 'codex')
     hit = next((s for s in list_sessions(config) if s.get('sessionId') == sid), None)
     pid = hit['pid'] if hit else None
     if a.command == 'stop':
